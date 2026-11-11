@@ -1,11 +1,12 @@
 # Android 프로젝트를 csc 로 타입 검사한다 (실제 APK 빌드는 CI).
 import sys, re, subprocess, os, glob
-T=os.environ.get('TOOLS') or os.path.expanduser('~/cds-tools')   # setup-toolchain.sh 가 꾸린 폴더
+T=os.environ.get('TOOLS') or os.path.expanduser('~/twg-tools')   # setup-toolchain.sh 가 꾸린 폴더
 proj=sys.argv[1]; pdir=os.path.dirname(os.path.abspath(proj))
 xml=open(proj,encoding='utf-8-sig').read()
 files=[os.path.join(pdir,f) for f in glob.glob('**/*.cs',root_dir=pdir,recursive=True) if not f.startswith(('obj/','bin/','devtools/'))]
 for inc in re.findall(r'<Compile Include="([^"]+)"',xml):
-    files.append(os.path.normpath(os.path.join(pdir,inc.replace('\\','/'))))
+    full=os.path.normpath(os.path.join(pdir,inc.replace('\\','/')))
+    files.extend(sorted(glob.glob(full)) if '*' in full else [full])   # <Compile Include="..\X\*.cs"> 처럼 별표로 끌어 쓴 것
 glob_using=os.path.join(T,'GlobalUsings.g.cs')
 open(glob_using,'w').write('\n'.join('global using global::%s;'%n for n in
   ['System','System.Collections.Generic','System.IO','System.Linq','System.Net.Http','System.Threading','System.Threading.Tasks',

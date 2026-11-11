@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      창세기전3 리메이크 안드로이드판. TheWarOfGenesis.sln 에는 넣지 않는다 — 안드로이드 워크로드가 없는
+      Windows PC 의 sln 빌드가 깨지기 때문이다. 따로 빌드한다:
+        dotnet publish WarOfGenesis.Android/WarOfGenesis.Android.csproj -c Release -f net10.0-android
+      원본(PC 판) 코드는 고치지 않고 아래에서 <Compile Include Link> 로 끌어 쓴다(docs/포팅-계획.md).
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0-android</TargetFramework>
+        <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+        <OutputType>Exe</OutputType>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <!-- 'WarOfGenesis.Android' 로 하면 안에서 Android.* 이름을 가린다. -->
+        <RootNamespace>WarOfGenesis.Droid</RootNamespace>
+        <AssemblyName>WarOfGenesis</AssemblyName>
+        <ApplicationId>io.github.makamaka456.warofgenesis</ApplicationId>
+        <ApplicationTitle>창세기전3</ApplicationTitle>
+        <!-- CI 에서 -p:ApplicationVersion=실행번호 -p:ApplicationDisplayVersion=태그 로 덮는다. -->
+        <ApplicationVersion>1</ApplicationVersion>
+        <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+        <!-- 릴리즈에 바로 올려 설치할 수 있게 aab 가 아니라 apk 로 낸다. 서명은 디버그 키다. -->
+        <AndroidPackageFormat>apk</AndroidPackageFormat>
+        <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+        <TrimMode>partial</TrimMode>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- devtools/ · pc-script/ · docs/ 는 개발 도구 · PC 용 스크립트 · 문서라 APK 에 넣지 않는다 -->
+        <Compile Remove="devtools\**;pc-script\**;docs\**" />
+        <None Remove="devtools\**;pc-script\**;docs\**" />
+    </ItemGroup>
+
+    <!--
+      PC 판 자료 읽기 · 전투 · 대본(WarOfGenesis.Assets, net10.0 — 윈도우에 안 묶임)을 통째로 끌어 쓴다.
+      윈도우 소리(waveOut)를 쓰는 AudioMixer.cs · WaveOutPlayer.cs 는 아직 그대로 들어 있다 — 소리를 갈아 끼울 때 뺀다.
+    -->
+    <ItemGroup>
+        <Compile Include="..\WarOfGenesis.Assets\*.cs" Link="Shared\WarOfGenesis.Assets\%(Filename)%(Extension)" />
+    </ItemGroup>
+
+</Project>
