@@ -87,13 +87,27 @@ function Close-Zip {
     if ($script:zipStream) { $script:zipStream.Dispose(); $script:zipStream = $null }
 }
 function Start-Zips([string]$prefix) { Close-Zip; $script:zipPrefix = $prefix; $script:zipNo = 0; Open-NextZip }
-function Add-ToZip([string]$file, [string]$entryName) {
-    $size = (Get-Item -LiteralPath $file).Length
+function Make-Room([long]$size) {
     if ($script:zipStream.Length -gt 0 -and $script:zipStream.Length + $size -gt $MaxZipBytes) { Open-NextZip }
+}
+function Add-ToZip([string]$file, [string]$entryName) {
+    Make-Room (Get-Item -LiteralPath $file).Length
     $ext = [System.IO.Path]::GetExtension($file).ToLowerInvariant()
     # 이미 눌린 꼴(영상 · mp3 · ogg · zip)은 다시 누르지 않는다 — 시간만 든다
     $level = if (@('.mov', '.bik', '.mp3', '.ogg', '.zip', '.wgm') -contains $ext) { [System.IO.Compression.CompressionLevel]::NoCompression } else { [System.IO.Compression.CompressionLevel]::Optimal }
-    [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($script:zip, $file, $entryName, $level)
+    # 백신 검사 따위로 잠깐 잠긴 파일은 조금 기다렸다 다시 해 본다
+    for ($try = 1; ; $try++) {
+        try { [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($script:zip, $file, $entryName, $level); break }
+        catch [System.IO.IOException] { if ($try -ge 5) { throw }; Start-Sleep -Seconds $try }
+    }
+    $script:zipStream.Flush()
+}
+# 메모리의 바이트를 그대로 zip 에 — 받은 자료를 디스크에 쓰지 않는다(백신이 새 파일을 잡고 있어 「다른 프로세스가 사용 중」이 나던 것)
+function Add-BytesToZip([byte[]]$bytes, [string]$entryName) {
+    Make-Room $bytes.Length
+    $entry = $script:zip.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+    $w = $entry.Open()
+    try { $w.Write($bytes, 0, $bytes.Length) } finally { $w.Dispose() }
     $script:zipStream.Flush()
 }
 
@@ -117,15 +131,19 @@ function Zip-GameFolder([string]$root, [string]$prefix, $list) {
     $list.Add(("{0}: {1}개, {2:N0}MB (원본 {3})" -f $prefix, $n, ($bytes / 1MB), $root))
 }
 
-function Get-Sha256([string]$file) {
+function Get-BytesSha256([byte[]]$bytes) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
-    $s = [System.IO.File]::OpenRead($file)
-    try { return ([BitConverter]::ToString($sha.ComputeHash($s)) -replace '-', '').ToLowerInvariant() } finally { $s.Dispose(); $sha.Dispose() }
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
 }
 
-function Download([string]$url, [string]$to) {
+# 받아서 메모리로 — sha256 이 주어지면 맞을 때까지(4번) 다시 받는다
+function Download-Bytes([string]$url, [string]$sha256 = '') {
     for ($try = 1; $try -le 4; $try++) {
-        try { (New-Object Net.WebClient).DownloadFile($url, $to); return }
+        try {
+            $bytes = (New-Object Net.WebClient).DownloadData($url)
+            if (-not $sha256 -or (Get-BytesSha256 $bytes) -eq $sha256) { return ,$bytes }
+            throw "받은 파일이 깨졌습니다: $url"
+        }
         catch { if ($try -eq 4) { throw }; Say "    다시 받기($try): $url"; Start-Sleep -Seconds ([math]::Pow(2, $try)) }
     }
 }
@@ -133,11 +151,10 @@ function Download([string]$url, [string]$to) {
 function Zip-Extras($list) {
     Say ""
     Say "[extras] 원작자 GitHub 릴리즈에서 「찾을 때 받는 자료」를 받습니다 (약 800MB, 인터넷 필요)..."
-    $cache = Join-Path $Out '_받는중'
-    New-Item -ItemType Directory -Force -Path $cache | Out-Null
-    $manifest = Join-Path $cache 'pack.json'
-    Download ($PackUrl + 'assets-base-1/pack.json') $manifest
-    $pack = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    $old = Join-Path $Out '_받는중'   # 옛 판이 남긴 임시 폴더
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }
+    $manifestBytes = Download-Bytes ($PackUrl + 'assets-base-1/pack.json')
+    $pack = [System.Text.Encoding]::UTF8.GetString($manifestBytes) | ConvertFrom-Json
     $want = @($pack.files | Where-Object { $_.tier -ge $OnDemandTier -and $_.name -notmatch '\.\.' })
     if ($ExtrasLimit -gt 0) { $want = @($want | Select-Object -First $ExtrasLimit) }
     $total = ($want | Measure-Object -Property size -Sum).Sum
@@ -145,20 +162,38 @@ function Zip-Extras($list) {
     Start-Zips 'extras'
     $n = 0; $got = 0
     foreach ($e in $want) {
-        $tmp = Join-Path $cache $e.asset
-        if (-not ((Test-Path -LiteralPath $tmp) -and (Get-Sha256 $tmp) -eq $e.sha256)) {
-            Download ($PackUrl + $e.release + '/' + $e.asset) $tmp
-            if ((Get-Sha256 $tmp) -ne $e.sha256) { throw "받은 파일이 깨졌습니다: $($e.asset) — 다시 실행해 주세요." }
-        }
-        Add-ToZip $tmp ('assets/' + $e.name)
-        Remove-Item -LiteralPath $tmp -Force
+        $bytes = Download-Bytes ($PackUrl + $e.release + '/' + $e.asset) $e.sha256
+        Add-BytesToZip $bytes ('assets/' + $e.name)
         $n++; $got += $e.size
         if ($n % 50 -eq 0) { Say ("    {0}/{1} ({2:N0}/{3:N0}MB)" -f $n, $want.Count, ($got / 1MB), ($total / 1MB)) }
     }
     Close-Zip
     # 어느 판의 목록으로 받았는지 남긴다(앱 · 시험기가 같은 목록인지 볼 수 있게)
-    $list.Add(("extras: {0}개, {1:N0}MB (pack.json sha256 {2})" -f $n, ($got / 1MB), (Get-Sha256 $manifest)))
-    Remove-Item -LiteralPath $cache -Recurse -Force
+    $list.Add(("extras: {0}개, {1:N0}MB (pack.json sha256 {2})" -f $n, ($got / 1MB), (Get-BytesSha256 $manifestBytes)))
+}
+
+# 다 만든 단계는 표시 파일(.part1.done 따위)을 남겨, 다시 실행하면 건너뛴다(같은 원본 폴더 · zip 이 그대로 있을 때만).
+function Run-Stage([string]$prefix, [string]$key, [scriptblock]$work, $detail) {
+    $mark = Join-Path $Out ".$prefix.done"
+    $zips = @(Get-ChildItem -LiteralPath $Out -Filter "$prefix-*.zip" -File)
+    if ((Test-Path -LiteralPath $mark) -and $zips.Count -gt 0) {
+        $saved = [System.IO.File]::ReadAllLines($mark)
+        $names = (@($zips | ForEach-Object { $_.Name }) | Sort-Object) -join '|'
+        if ($saved.Count -ge 2 -and $saved[0] -eq $key -and $saved[1] -eq "zips=$names") {
+            Say ""
+            Say "[$prefix] 지난번에 이미 만들었습니다 — 건너뜁니다 (다시 만들려면 $prefix-*.zip 을 지우세요)"
+            foreach ($z in $zips) { $script:made.Add($z.FullName) }
+            foreach ($line in ($saved | Select-Object -Skip 2)) { $detail.Add($line) }
+            return
+        }
+    }
+    foreach ($z in $zips) { Remove-Item -LiteralPath $z.FullName -Force }
+    if (Test-Path -LiteralPath $mark) { Remove-Item -LiteralPath $mark -Force }
+    $mine = New-Object System.Collections.Generic.List[string]
+    & $work $mine
+    foreach ($line in $mine) { $detail.Add($line) }
+    $names = (@(Get-ChildItem -LiteralPath $Out -Filter "$prefix-*.zip" -File | ForEach-Object { $_.Name }) | Sort-Object) -join '|'
+    [System.IO.File]::WriteAllLines($mark, [string[]](@($key, "zips=$names") + $mine), (New-Object System.Text.UTF8Encoding($false)))
 }
 
 try {
@@ -168,7 +203,6 @@ try {
     if (-not $Out) { $Out = Join-Path ([Environment]::GetFolderPath('Desktop')) '창세기전-안드로이드-자료' }
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     $Out = (Resolve-Path -LiteralPath $Out).ProviderPath
-    foreach ($old in Get-ChildItem -LiteralPath $Out -Filter '*.zip' -File) { Remove-Item -LiteralPath $old.FullName -Force }
     Say "파트1: $Part1"
     Say "파트2: $Part2"
     Say "만들 곳: $Out"
@@ -179,9 +213,9 @@ try {
     $list.Add("")
     $detail = New-Object System.Collections.Generic.List[string]
 
-    Zip-GameFolder $Part1 'part1' $detail
-    Zip-GameFolder $Part2 'part2' $detail
-    if (-not $SkipExtras) { Zip-Extras $detail }
+    Run-Stage 'part1' $Part1 { param($l) Zip-GameFolder $Part1 'part1' $l } $detail
+    Run-Stage 'part2' $Part2 { param($l) Zip-GameFolder $Part2 'part2' $l } $detail
+    if (-not $SkipExtras) { Run-Stage 'extras' "limit=$ExtrasLimit" { param($l) Zip-Extras $l } $detail }
 
     foreach ($d in $detail) { if (-not $d.StartsWith('  ')) { $list.Add($d) } }
     $list.Add("")
