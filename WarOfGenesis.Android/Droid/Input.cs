@@ -105,16 +105,25 @@ internal sealed class TouchMouse(GameView view, float density)
                     PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
                 }
                 _dragging = false;
+                Park();
                 return true;
             }
             case MotionEventActions.Cancel:
                 CancelLongPress();
                 if (_dragging) { var (cx, cy) = ToClient(e.GetX(), e.GetY()); PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy); }
                 _dragging = false;
+                Park();
                 return true;
         }
         return true;
     }
+
+    /// <summary>
+    /// 손을 떼면 마우스를 화면 밖으로 치운다 — 터치에는 「올려 두기」가 없다. 안 치우면 마지막으로 누른 자리에 커서가 남아,
+    /// 원본의 가장자리 스크롤(마우스가 화면 끝 24점 안이면 맵을 민다, BattleScene.EdgePush)이 창 위쪽 탭을 누른 뒤에도 맵을 계속 밀었다(사용자 보고).
+    /// 원본도 마우스가 판 밖(음수)이면 가장자리 스크롤 · 마우스 올림 표시를 하지 않는다.
+    /// </summary>
+    private static void Park() => PlatformHost.Mouse(Win32.WM_MOUSEMOVE, -1, -1);
 
     private void CancelLongPress()
     {
