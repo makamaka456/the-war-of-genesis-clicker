@@ -13,8 +13,10 @@ namespace DuelDx;
 /// </remarks>
 internal sealed partial class GamePad
 {
+#if !ANDROID   // 안드로이드: WarOfGenesis.Android/Platform/GamePad.Android.cs
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref Win32.Point point);
+#endif
 
     /// <summary>방향을 누르고 있을 때 처음 기다리는 시간과 그 뒤 되풀이 간격(초).</summary>
     private const double SnapDelay = 0.35, SnapEvery = 0.12;

@@ -6,6 +6,7 @@ using Android.Views;
 using WarOfGenesis.Assets;
 using WarOfGenesis.Droid.Game;
 using Path = System.IO.Path;
+using Color = Android.Graphics.Color;
 
 namespace WarOfGenesis.Droid;
 
@@ -22,6 +23,8 @@ namespace WarOfGenesis.Droid;
 public class MainActivity : Activity
 {
     private const int PickFolderCode = 11, PickZipCode = 12;
+    /// <summary>게임 안 메뉴 「원본 폴더 고르기 화면」으로 왔다 — 바로 게임으로 넘기지 않는다.</summary>
+    public const string ExtraSetup = "setup";
     private const string Caption = "창세기전3 파트2";
 
     private TextView _log = null!;
@@ -36,6 +39,12 @@ public class MainActivity : Activity
         GameSetup.StorePath = Path.Combine(FilesDir!.AbsolutePath, "setup.txt");
         GameSetup.Fallback = FallbackDir;
         GameSetup.Load();
+        // 이미 원본 자리를 골라 두었으면 곧장 게임으로(고르기 화면은 게임 안 ☰ 메뉴에서 다시 연다).
+        if (!Intent!.GetBooleanExtra(ExtraSetup, false) && StorageAccess.Granted(this) && (GameSetup.HasPart2 || GameSetup.HasPart1))
+        {
+            StartGame();
+            return;
+        }
         SetContentView(BuildLayout());
         Intro();
     }
@@ -82,6 +91,11 @@ public class MainActivity : Activity
         AddButton(row, "파트1 폴더 고르기", () => Pick(PickFolderCode));
         AddButton(row, "zip 고르기", () => Pick(PickZipCode));
         AddButton(row, "다시 확인", () => RunWork(Check));
+        AddButton(row, "게임 시작", () =>
+        {
+            if (GameSetup.HasPart2 || GameSetup.HasPart1) StartGame();
+            else Say("\n먼저 원본 폴더나 zip 을 골라 주세요.");
+        });
         AddButton(row, "끝내기", FinishAffinity);
         root.AddView(row);
         return root;
@@ -202,7 +216,13 @@ public class MainActivity : Activity
             var names = Enumerable.Range(0, 40).Select(Part1Game.Character).Where(c => c is { Name.Length: > 0 }).Take(5).Select(c => c!.Name);
             Say($"파트1 읽기: 인물 — {string.Join(", ", names)}");
         }
-        Say("\n여기까지 보이면 이 판의 시험은 끝입니다. 이 화면을 사진으로 찍어 보내 주세요. (게임 화면은 다음 판에서 붙입니다)");
+        Say("\n「게임 시작」을 누르세요. (게임이 이미 켜져 있으면 바꾼 폴더는 앱을 다시 켤 때 적용됩니다)");
+    }
+
+    private void StartGame()
+    {
+        StartActivity(new Intent(this, typeof(GameActivity)));
+        Finish();
     }
 
     /// <summary>그 자리에 못 쓸 때 대신 쓸 곳 — 같은 저장소(SD카드)의 앱 전용 폴더, 없으면 내장 저장소의 앱 폴더.</summary>
