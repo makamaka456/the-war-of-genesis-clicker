@@ -590,6 +590,12 @@ internal static class ShippedFiles
             // 파일
             Directory.CreateDirectory(Path.GetDirectoryName(to)!);
             using var src = assets.Open(from);
+            if (Path.GetFileName(to) == "릴리즈노트.md")
+            {
+                using var reader = new StreamReader(src);
+                File.WriteAllText(to, ReleaseNotesTrim.Head(reader.ReadToEnd()));
+                return;
+            }
             using var dst = File.Create(to);
             src.CopyTo(dst);
             return;

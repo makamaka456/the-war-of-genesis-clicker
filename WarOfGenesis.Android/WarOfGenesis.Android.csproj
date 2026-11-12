@@ -21,6 +21,8 @@
         <!-- CI 에서 -p:ApplicationVersion=실행번호 -p:ApplicationDisplayVersion=태그 로 덮는다. -->
         <ApplicationVersion>1</ApplicationVersion>
         <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+        <!-- 타이틀 오른쪽 위 「Ver …」(GameWindow.AppVersion) — 안드로이드 판 번호를 보인다. -->
+        <InformationalVersion>$(ApplicationDisplayVersion)-android</InformationalVersion>
         <!-- 릴리즈에 바로 올려 설치할 수 있게 aab 가 아니라 apk 로 낸다. 서명은 디버그 키다. -->
         <AndroidPackageFormat>apk</AndroidPackageFormat>
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>

@@ -51,7 +51,8 @@ namespace Vortice.DXGI
     public class ComObject : IDisposable
     {
         public virtual void Dispose() { }
-        public T QueryInterface<T>() where T : class => (this as T) ?? throw new InvalidCastException(typeof(T).Name);
+        public T QueryInterface<T>() where T : class =>
+            this as T ?? (typeof(T) == typeof(IDXGIDevice) ? (T)(object)new IDXGIDevice() : throw new InvalidCastException(typeof(T).Name));
     }
 
     public sealed class IDXGIDevice : ComObject

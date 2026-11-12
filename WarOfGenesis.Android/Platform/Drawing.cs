@@ -29,6 +29,30 @@ namespace System.Drawing
         /// <summary>그림 파일(PNG · BMP · JPG) 읽개 — 안드로이드: BitmapFactory, 시험기: 따로. (ARGB 점, 너비, 높이).</summary>
         public static Func<Stream, (uint[] Px, int W, int H)>? Decoder;
         internal static ITextEngine Need => Current ?? throw new InvalidOperationException("글자 엔진이 없습니다(TextEngine.Current).");
+
+        private static readonly Dictionary<(char C, string Face, string? File, float Size, bool Bold), float> Advance = [];
+        private static readonly Dictionary<(string Face, string? File, float Size, bool Bold), float> LineHeight = [];
+
+        /// <summary>
+        /// 글 재기 — 글자마다 한 번 잰 폭을 기억해 더한다. 원본의 줄바꿈(WrapText)은 글자를 하나 붙일 때마다 줄 전체를 다시 재는데,
+        /// 그때마다 글꼴 엔진을 부르면 폰에서 「패치 내역」(4만 자)이 몇 분씩 멈췄다(iOS 판 1.1.5 — docs/iOS-포팅-참고.md i4).
+        /// </summary>
+        internal static SizeF Measure(string text, Font font, bool typographic)
+        {
+            var key = (font.FontFamily.Name, font.FontFamily.File, font.Size, font.Bold);
+            float w = 0, h;
+            lock (Advance)
+            {
+                foreach (char c in text)
+                {
+                    if (!Advance.TryGetValue((c, key.Name, key.File, key.Size, key.Bold), out float a))
+                        Advance[(c, key.Name, key.File, key.Size, key.Bold)] = a = Need.Measure(c.ToString(), font, typographic: true).Width;
+                    w += a;
+                }
+                if (!LineHeight.TryGetValue(key, out h)) LineHeight[key] = h = Need.Measure("가", font, typographic: true).Height;
+            }
+            return typographic ? new SizeF(w, h) : new SizeF(w + font.Size / 3, h);
+        }
     }
 
     public sealed class FontFamily : IDisposable
@@ -156,9 +180,9 @@ namespace System.Drawing
 
         public void Clear(Color color) => _target.Pixels.AsSpan().Fill((uint)color.ToArgb());
 
-        public SizeF MeasureString(string text, Font font) => TextEngine.Need.Measure(text, font, typographic: false);
+        public SizeF MeasureString(string text, Font font) => TextEngine.Measure(text, font, typographic: false);
 
-        public SizeF MeasureString(string text, Font font, int width, StringFormat format) => TextEngine.Need.Measure(text, font, format.Typographic);
+        public SizeF MeasureString(string text, Font font, int width, StringFormat format) => TextEngine.Measure(text, font, format.Typographic);
 
         public void DrawString(string text, Font font, Brush brush, float x, float y) =>
             TextEngine.Need.Draw(_target.Pixels, _target.Width, _target.Height, text, font, ((SolidBrush)brush).Color, x, y);
