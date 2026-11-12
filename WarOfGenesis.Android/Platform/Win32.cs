@@ -157,7 +157,12 @@ internal static unsafe class Win32
 
     public static bool PeekMessageW(out Msg msg, IntPtr hWnd, uint filterMin, uint filterMax, uint remove) => PlatformHost.TryTake(out msg);
     public static bool TranslateMessage(ref Msg msg) => true;
-    public static IntPtr DispatchMessageW(ref Msg msg) => msg.Message == WM_QUIT ? IntPtr.Zero : _proc?.Invoke(msg.Hwnd, msg.Message, msg.WParam, msg.LParam) ?? IntPtr.Zero;
+    public static IntPtr DispatchMessageW(ref Msg msg)
+    {
+        if (msg.Message == WM_QUIT) return IntPtr.Zero;
+        if (msg.Message == PlatformHost.WM_APP_INVOKE) { PlatformHost.RunQueued(); return IntPtr.Zero; }
+        return _proc?.Invoke(msg.Hwnd, msg.Message, msg.WParam, msg.LParam) ?? IntPtr.Zero;
+    }
     public static void PostQuitMessage(int exitCode) => PlatformHost.Post(WM_QUIT, 0, 0);
 
     /// <summary>틀 기다림 — 스왑체인 손잡이면 다음 화면 시각(60Hz)까지 잔다. 입력이 오면 바로 깬다.</summary>
@@ -369,6 +374,12 @@ internal static class PlatformHost
     }
 
     public static void Char(char c) => Post(Win32.WM_CHAR, c, 1);
+
+    /// <summary>게임 스레드에서 할 일 — 메시지 줄로 넘겨 원본 게임 갱신과 겹치지 않게 돈다(단축 아이콘의 이전 · 다음 인물 · 배속 따위).</summary>
+    public const uint WM_APP_INVOKE = 0x8101;
+    private static readonly ConcurrentQueue<Action> Work = new();
+    public static void RunOnGame(Action action) { Work.Enqueue(action); Post(WM_APP_INVOKE, 0, 0); }
+    internal static void RunQueued() { while (Work.TryDequeue(out var a)) a(); }
 
     public static void Command(int id) => Post(Win32.WM_COMMAND, id & 0xFFFF, 0);
 

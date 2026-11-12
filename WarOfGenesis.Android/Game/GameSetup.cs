@@ -84,6 +84,92 @@ public static class GameSetup
         return string.Join("\n", new[] { p2 != null ? "파트2: " + p2 : null, p1 != null ? "파트1: " + p1 : null }.Where(s => s != null));
     }
 
+    /// <summary>
+    /// 런처의 「폴더 고르기」 — 고른 폴더(와 그 밑 세 겹)에서 파트2 · 파트1 원본과 게임 자료 폴더를 <b>안의 파일로</b> 찾는다(폴더 이름은 보지 않는다).
+    /// 게임 자료 폴더가 없으면 고른 폴더 안에 새로 만든다.
+    /// </summary>
+    public static void UseRoot(string folder)
+    {
+        folder = Path.GetFullPath(folder).TrimEnd('/');
+        var (p2, p1) = FindRoots(folder, 3);
+        // 원본 폴더 안(TXR 따위)을 골랐으면 위로 올라가며 찾는다
+        for (string? up = Path.GetDirectoryName(folder); p2 == null && p1 == null && up is { Length: > 1 }; up = Path.GetDirectoryName(up))
+        {
+            (p2, p1) = FindRoots(up, 1);
+            if (folder.StartsWith(up + "/", StringComparison.Ordinal) && (p2 != null || p1 != null)) break;
+        }
+        // 찾은 원본 옆에 다른 파트가 있으면 같이(PC 판도 옆 폴더를 찾는다)
+        if (p2 != null && p1 == null && Path.GetDirectoryName(p2) is { } d2) p1 = FindRoots(d2, 1).Part1;
+        if (p1 != null && p2 == null && Path.GetDirectoryName(p1) is { } d1) p2 = FindRoots(d1, 1).Part2;
+        Part2 = p2;
+        Part1 = p1;
+        // 고른 곳이 원본 폴더이거나 그 안이면, 원본 폴더를 둔 폴더를 기준으로 삼는다 — 원본 폴더에는 아무것도 쓰지 않는다
+        foreach (string? root in (string?[])[p2, p1])
+            if (root != null && (folder == root || folder.StartsWith(root + "/", StringComparison.Ordinal)))
+                folder = Path.GetDirectoryName(root)!;
+        string? data = FindDataDir(folder, 3);
+        DataDir = data != null && Writable(data) != null ? data : null;
+        if (DataDir == null && (p2 != null || p1 != null))
+        {
+            string? created = Writable(Path.Combine(folder, DataFolderName));
+            DataDir = created ?? Fallback(folder);
+            Directory.CreateDirectory(DataDir);
+        }
+        Save();
+    }
+
+    /// <summary>
+    /// 게임 자료 · 세이브 폴더인가 — 게임이 그 폴더에 쓰는 것(settings.json · keys.json · pad.json · last-part.txt · part1.json · timedhit.json)이나
+    /// 원본에서 꺼낸 자료 · 원작자 추가 자료(assets 밑의 effects · part1 · data · .shipped)가 있으면 그렇다고 본다. 원본 게임 폴더는 아니어야 한다.
+    /// </summary>
+    public static bool LooksLikeDataDir(string dir)
+    {
+        if (OriginalGame.IsValid(dir) || Part1Game.IsValid(dir)) return false;
+        try
+        {
+            foreach (string f in (string[])["settings.json", "keys.json", "pad.json", "last-part.txt", "part1.json", "timedhit.json"])
+                if (File.Exists(Path.Combine(dir, f))) return true;
+            string assets = Path.Combine(dir, "assets");
+            return Directory.Exists(assets) && (Directory.Exists(Path.Combine(assets, "effects")) || Directory.Exists(Path.Combine(assets, "part1"))
+                                                || Directory.Exists(Path.Combine(assets, "data")) || File.Exists(Path.Combine(assets, ".shipped")));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>그 폴더와 그 밑 <paramref name="depth"/> 겹에서 게임 자료 폴더를 찾는다(원본 게임 폴더 안으로는 안 들어간다).</summary>
+    public static string? FindDataDir(string folder, int depth)
+    {
+        var queue = new Queue<(string Dir, int Depth)>();
+        queue.Enqueue((folder, 0));
+        while (queue.Count > 0)
+        {
+            var (dir, d) = queue.Dequeue();
+            if (LooksLikeDataDir(dir)) return dir;
+            if (d >= depth || OriginalGame.IsValid(dir) || Part1Game.IsValid(dir)) continue;
+            try
+            {
+                foreach (string sub in Directory.EnumerateDirectories(dir).OrderBy(s => s, StringComparer.OrdinalIgnoreCase))
+                    if (!Path.GetFileName(sub).StartsWith('.') && Path.GetFileName(sub) != "assets") queue.Enqueue((sub, d + 1));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return null;
+    }
+
+    /// <summary>원작자 추가 자료(extras zip 을 푼 것 — assets/part1 · assets/effects/cut) 파일 수.</summary>
+    public static int ExtrasCount()
+    {
+        if (DataDir == null) return 0;
+        int n = 0;
+        foreach (string sub in (string[])["part1", Path.Combine("effects", "cut")])
+        {
+            string dir = Path.Combine(DataDir, "assets", sub);
+            try { if (Directory.Exists(dir)) n += Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Count(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return n;
+    }
+
     /// <summary>그 폴더와 그 밑 <paramref name="depth"/> 겹 안에서 파트2 · 파트1 원본 폴더를 찾는다(먼저 찾은 것).</summary>
     public static (string? Part2, string? Part1) FindRoots(string folder, int depth)
     {

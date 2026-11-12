@@ -1,40 +1,54 @@
-// 게임 화면 — 원본 게임(duel-dx GameWindow)을 게임 스레드에서 돌리고, 그 뒷버퍼를 화면에 띄우고, 터치 · 패드 · 키를 윈도우 메시지로 넘긴다.
+// 게임 화면 — 원본 게임(duel-dx GameWindow)을 게임 스레드에서 돌리고, 뒷버퍼를 화면에 띄우고, 터치 · 패드 · 키를 윈도우 메시지로 넘긴다.
+// 패드가 없을 때는 화면 양옆에 단축 아이콘(Shortcuts)을 둔다 — 원본 패드 동작과 같은 일을 한다(docs/mockup/shortcut-*.png, 사용자 확정 2026-11-12).
 #nullable enable
 using Android.Content;
 using Android.Content.PM;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.Views;
-using Android.Views.InputMethods;
 using DuelDx;
 using DuelDx.Native;
-using WarOfGenesis.Assets;
 using WarOfGenesis.Droid.Game;
 using Path = System.IO.Path;
 using Bitmap = Android.Graphics.Bitmap;
+using Color = Android.Graphics.Color;
 
 namespace WarOfGenesis.Droid;
 
 [Activity(Label = "창세기전3", Theme = "@android:style/Theme.Material.NoActionBar.Fullscreen",
     ScreenOrientation = ScreenOrientation.SensorLandscape, LaunchMode = LaunchMode.SingleTask,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard
-                         | ConfigChanges.Navigation | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode)]
+                         | ConfigChanges.Navigation | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode
+                         | ConfigChanges.Density | ConfigChanges.FontScale | ConfigChanges.Locale | ConfigChanges.LayoutDirection)]
 public class GameActivity : Activity
 {
+    private const int PickBackdropCode = 21, PickAgain = -100;
     private GameView _view = null!;
+    private Shortcuts _shortcuts = null!;
     private static Thread? _game;
+
+    /// <summary>돌고 있는 원본 게임 창 — 단축 아이콘이 지금 화면(전투인가 따위)을 본다.</summary>
+    internal static volatile GameWindow? Game;
 
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
-        Window!.AddFlags(WindowManagerFlags.Fullscreen);
+        CrashLog.Install(FilesDir!.AbsolutePath);
         HideBars();
+        Backdrop.Load(FilesDir!.AbsolutePath);
         var root = new FrameLayout(this);
         _view = new GameView(this);
         root.AddView(_view);
-        AddCornerButtons(root);
+        _shortcuts = new Shortcuts(this, root, _view);
         SetContentView(root);
+        // 화면이 다시 만들어져도(게임은 그대로 돈다) 새 화면에 이어 붙인다
+        PlatformHost.Presenter = _view.Present;
         PlatformHost.ScreenOn = on => RunOnUiThread(() => { if (on) Window!.AddFlags(WindowManagerFlags.KeepScreenOn); else Window!.ClearFlags(WindowManagerFlags.KeepScreenOn); });
         PlatformHost.Dialog = ShowDialogBlocking;
+        // 맨 아래에 「원본 폴더 다시 고르기」(런처로) — 런처는 원본을 골라 두면 건너뛰므로 다시 고를 길이 여기뿐이다.
+        AndroidHooks.ShowTools = items => RunOnUiThread(() => ShowTools([.. items, new AndroidHooks.ToolItem("원본 폴더 다시 고르기", PickAgain, [])], "도구", null));
+        AndroidHooks.ShowBackdrop = () => RunOnUiThread(ShowBackdropDialog);
+        AndroidHooks.BackdropNameOf = () => Backdrop.Has ? "있음" : "없음";
         PadInput.Refresh();
         if (_game == null) StartGame();
     }
@@ -42,8 +56,9 @@ public class GameActivity : Activity
     private void HideBars()
     {
 #pragma warning disable CA1422 // 옛 기기(안드로이드 7~10)도 같은 깃발로 숨긴다
-        Window!.DecorView.SystemUiFlags = SystemUiFlags.Fullscreen | SystemUiFlags.HideNavigation | SystemUiFlags.ImmersiveSticky | SystemUiFlags.LayoutStable
-                                          | SystemUiFlags.LayoutHideNavigation | SystemUiFlags.LayoutFullscreen;
+        Window!.AddFlags(WindowManagerFlags.Fullscreen);
+        Window.DecorView.SystemUiFlags = SystemUiFlags.Fullscreen | SystemUiFlags.HideNavigation | SystemUiFlags.ImmersiveSticky | SystemUiFlags.LayoutStable
+                                         | SystemUiFlags.LayoutHideNavigation | SystemUiFlags.LayoutFullscreen;
 #pragma warning restore CA1422
     }
 
@@ -64,6 +79,7 @@ public class GameActivity : Activity
     protected override void OnResume()
     {
         base.OnResume();
+        HideBars();
         PadState.AppInFront = true;
         AndroidAudio.Pause(false);
         PlatformHost.Activate(true);
@@ -77,7 +93,6 @@ public class GameActivity : Activity
         var metrics = Resources!.DisplayMetrics!;
         PlatformHost.ScreenW = Math.Max(metrics.WidthPixels, metrics.HeightPixels);
         PlatformHost.ScreenH = Math.Min(metrics.WidthPixels, metrics.HeightPixels);
-        PlatformHost.Presenter = _view.Present;
         string filesDir = FilesDir!.AbsolutePath;
         var assets = Assets!;
         _game = new Thread(() =>
@@ -94,13 +109,17 @@ public class GameActivity : Activity
                 if (!OriginalGameSetup.Ensure()) throw new DirectoryNotFoundException("원본 게임 폴더를 모릅니다 — 첫 화면에서 골라 주세요.");
                 CustomSprites.InstallExamples();
                 _view.Status = null;
-                using (var window = new GameWindow()) window.Run();
+                using (var window = new GameWindow())
+                {
+                    Game = window;
+                    window.Run();
+                }
+                Game = null;
                 RunOnUiThread(FinishAffinity);
             }
             catch (Exception ex)
             {
-                string log = $"{ex}";
-                try { File.WriteAllText(Path.Combine(GameSetup.DataDir ?? filesDir, "crash.log"), log); } catch (Exception) { }
+                CrashLog.Write("게임 스레드", ex);
                 _view.Status = "게임을 시작하지 못했습니다 — 이 화면을 사진으로 찍어 보내 주세요.\n\n" + ex.GetType().Name + ": " + ex.Message + "\n\n" + ex.StackTrace;
             }
         }, 16 * 1024 * 1024) { IsBackground = true, Name = "Game" };
@@ -128,73 +147,92 @@ public class GameActivity : Activity
                 b.SetTitle(caption + " — " + text);
                 b.SetItems(buttons, (_, e) => { picked = e.Which; done.Set(); });
             }
-            b.Show();
+            ShowImmersive(b.Create()!);
         });
         done.Wait();
         return picked;
     }
 
-    // ── 모서리 단추: 메뉴(PC 판 메뉴 막대) · 키보드 ─────────────────────────
-
-    private void AddCornerButtons(FrameLayout root)
+    /// <summary>대화 상자를 띄워도 위 · 아래 막대가 다시 나오지 않게.</summary>
+    private void ShowImmersive(Dialog dialog)
     {
-        var bar = new LinearLayout(this) { Orientation = Orientation.Horizontal, Alpha = 0.55f };
-        bar.AddView(CornerButton("☰", ShowMenuBar));
-        bar.AddView(CornerButton("⌨", () => _view.ToggleKeyboard()));
-        root.AddView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, ViewGroup.LayoutParams.WrapContent, GravityFlags.Top | GravityFlags.Right));
+        dialog.Window?.SetFlags(WindowManagerFlags.NotFocusable, WindowManagerFlags.NotFocusable);
+        dialog.Show();
+#pragma warning disable CA1422
+        if (dialog.Window != null) dialog.Window.DecorView.SystemUiFlags = Window!.DecorView.SystemUiFlags;
+#pragma warning restore CA1422
+        dialog.Window?.ClearFlags(WindowManagerFlags.NotFocusable);
+        dialog.DismissEvent += (_, _) => HideBars();
     }
 
-    private TextView CornerButton(string label, Action click)
-    {
-        var b = new TextView(this) { Text = label, TextSize = 18, Gravity = GravityFlags.Center };
-        b.SetTextColor(Android.Graphics.Color.White);
-        b.SetBackgroundColor(Android.Graphics.Color.Argb(120, 0, 0, 0));
-        int pad = (int)(8 * Resources!.DisplayMetrics!.Density);
-        b.SetPadding(pad * 2, pad, pad * 2, pad);
-        b.Click += (_, _) => click();
-        return b;
-    }
+    // ── 시스템 메뉴 > 도구 (PC 판 메뉴 막대의 도구 · 개발) — 가운데 목록 창 ─────
 
-    private void ShowMenuBar()
+    private void ShowTools(IReadOnlyList<AndroidHooks.ToolItem> items, string title, Action? back)
     {
-        // 펼치기 전에 게임에 알려 체크 표시를 고치게 한다(원본 WM_INITMENUPOPUP) — 게임 스레드가 처리할 틈을 조금 준다.
-        if (Win32.MenuBar is { } bar)
-            foreach (var item in bar.Items.ToArray())
-                if (item.Sub != null) PlatformHost.Post(Win32.WM_INITMENUPOPUP, Win32.HandleOf(item.Sub), 0);
-        _view.PostDelayed(() =>
+        var names = items.Select(i => i.Children.Count > 0 ? i.Text + "  ▶" : i.Text).ToList();
+        names.Add(back != null ? "◀ 뒤로" : "닫기");
+        var b = new AlertDialog.Builder(this).SetTitle(title)!;
+        b.SetItems([.. names], (_, e) =>
         {
-            var anchor = FindViewById(Android.Resource.Id.Content)!;
-            var popup = new PopupMenu(this, _view, GravityFlags.Right);
-            var actions = new Dictionary<int, Action>();
-            int next = 1;
-            if (Win32.MenuBar is { } menuBar) AddItems(popup.Menu!, menuBar, actions, ref next);
-            actions[next] = () => StartActivity(new Intent(this, typeof(MainActivity)).PutExtra(MainActivity.ExtraSetup, true));
-            popup.Menu!.Add(0, next, 9999, "원본 폴더 고르기 화면");
-            popup.MenuItemClick += (_, e) => { if (actions.TryGetValue(e.Item!.ItemId, out var act)) act(); };
-            popup.Show();
-        }, 120);
+            if (e.Which >= items.Count) { back?.Invoke(); return; }
+            var item = items[e.Which];
+            if (item.Children.Count > 0) ShowTools(item.Children, title + " › " + item.Text, () => ShowTools(items, title, back));
+            else if (item.Command == PickAgain) StartActivity(new Intent(this, typeof(MainActivity)).PutExtra(MainActivity.ExtraSetup, true));
+            else PlatformHost.Command(item.Command);
+        });
+        ShowImmersive(b.Create()!);
     }
 
-    private static void AddItems(IMenu menu, Win32.MenuNode node, Dictionary<int, Action> actions, ref int next)
+    // ── 설정 > 화면 > 배경 그림 ─────────────────────────────────────────────
+
+    private void ShowBackdropDialog()
     {
-        foreach (var item in node.Items.ToArray())
+        float dp = Resources!.DisplayMetrics!.Density;
+        var box = new LinearLayout(this) { Orientation = Orientation.Vertical };
+        box.SetPadding((int)(20 * dp), (int)(8 * dp), (int)(20 * dp), 0);
+        var row = new LinearLayout(this) { Orientation = Orientation.Horizontal };
+        var pick = new Button(this) { Text = "그림 고르기" };
+        var clear = new Button(this) { Text = "그림 지우기" };
+        pick.SetAllCaps(false);
+        clear.SetAllCaps(false);
+        row.AddView(pick, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1));
+        row.AddView(clear, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WrapContent, 1));
+        box.AddView(row);
+        void Slider(string label, int min, int max, Func<int> get, Action<int> set)
         {
-            if (item.Separator || item.Text == null) continue;
-            string text = item.Text.Replace("&", "");
-            if (item.Sub != null)
-            {
-                var sub = menu.AddSubMenu(0, next++, next, text)!;
-                AddItems(sub, item.Sub, actions, ref next);
-                continue;
-            }
-            int id = next++;
-            var mi = menu.Add(0, id, id, text)!;
-            mi.SetCheckable(item.Checked);
-            mi.SetChecked(item.Checked);
-            mi.SetEnabled(!item.Grayed);
-            int command = (int)item.Id;
-            actions[id] = () => PlatformHost.Command(command);
+            var text = new TextView(this) { Text = $"{label}: {get()}%" };
+            var bar = new SeekBar(this) { Max = max - min, Progress = get() - min };
+            bar.ProgressChanged += (_, e) => { set(e.Progress + min); text.Text = $"{label}: {e.Progress + min}%"; _view.PostInvalidate(); };
+            bar.StopTrackingTouch += (_, _) => Backdrop.Save();
+            box.AddView(text);
+            box.AddView(bar);
         }
+        Slider("가로 크기(화면 너비 기준)", 20, 200, () => Backdrop.WidthPercent, v => Backdrop.WidthPercent = v);
+        Slider("세로 크기(화면 높이 기준)", 20, 200, () => Backdrop.HeightPercent, v => Backdrop.HeightPercent = v);
+        Slider("불투명도(0 = 안 보임)", 0, 100, () => Backdrop.OpacityPercent, v => Backdrop.OpacityPercent = v);
+        var dialog = new AlertDialog.Builder(this).SetTitle("배경 그림 — 검은 여백 채우기")!.SetView(box)!.SetPositiveButton("닫기", (_, _) => Backdrop.Save())!.Create()!;
+        pick.Click += (_, _) =>
+        {
+            dialog.Dismiss();
+            var intent = new Intent(Intent.ActionOpenDocument).AddCategory(Intent.CategoryOpenable).SetType("image/*");
+            try { StartActivityForResult(intent, PickBackdropCode); } catch (ActivityNotFoundException) { }
+        };
+        clear.Click += (_, _) => { Backdrop.Clear(); _view.PostInvalidate(); dialog.Dismiss(); };
+        ShowImmersive(dialog);
+    }
+
+    protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
+    {
+        base.OnActivityResult(requestCode, resultCode, data);
+        if (requestCode != PickBackdropCode || resultCode != Result.Ok || data?.Data is not { } uri) return;
+        try
+        {
+            using var src = ContentResolver!.OpenInputStream(uri)!;
+            Backdrop.SetImage(src);
+            _view.PostInvalidate();
+            ShowBackdropDialog();   // 고른 뒤 크기 · 투명도를 바로 맞추게
+        }
+        catch (Exception ex) { Toast.MakeText(this, "그림을 읽지 못했습니다: " + ex.Message, ToastLength.Long)!.Show(); }
     }
 
     // ── 키 · 패드 ────────────────────────────────────────────────────────
@@ -202,11 +240,11 @@ public class GameActivity : Activity
     public override bool DispatchKeyEvent(KeyEvent? e)
     {
         if (e == null) return base.DispatchKeyEvent(e);
-        if (PadInput.Key(e)) return true;
+        if (PadInput.Key(e)) { _shortcuts.Refresh(); return true; }
         int vk = KeyMap.ToVk(e.KeyCode);
         if (vk != 0)
         {
-            if (e.Action == KeyEventActions.Down && e.RepeatCount == 0 || e.Action == KeyEventActions.Down && KeyMap.Repeats(vk)) PlatformHost.Key(vk, true);
+            if (e.Action == KeyEventActions.Down && (e.RepeatCount == 0 || KeyMap.Repeats(vk))) PlatformHost.Key(vk, true);
             else if (e.Action == KeyEventActions.Up) PlatformHost.Key(vk, false);
             if (e.Action == KeyEventActions.Down && e.UnicodeChar is var uc and >= 32 && vk is not (Win32.VK_RETURN or Win32.VK_SPACE)) PlatformHost.Char((char)uc);
             return true;
@@ -214,19 +252,24 @@ public class GameActivity : Activity
         return base.DispatchKeyEvent(e);
     }
 
-    public override bool DispatchGenericMotionEvent(MotionEvent? e) => (e != null && PadInput.Motion(e)) || base.DispatchGenericMotionEvent(e);
+    public override bool DispatchGenericMotionEvent(MotionEvent? e)
+    {
+        if (e != null && PadInput.Motion(e)) { _shortcuts.Refresh(); return true; }
+        return base.DispatchGenericMotionEvent(e);
+    }
 
     public override void OnBackPressed() { }   // 뒤로 = Esc (DispatchKeyEvent 가 받는다)
 }
 
-/// <summary>뒷버퍼를 비율 그대로 화면 가운데에 띄우고, 터치를 창 좌표의 마우스로 바꾼다.</summary>
+/// <summary>뒷버퍼를 비율 그대로 화면 가운데에 띄우고(둘레는 배경 그림), 터치를 창 좌표의 마우스로 바꾼다.</summary>
 internal sealed class GameView : View
 {
     private Bitmap? _bitmap;
     private int[] _pixels = [];
     private readonly object _gate = new();
     private readonly Paint _paint = new() { FilterBitmap = true };
-    private readonly Paint _text = new() { Color = Android.Graphics.Color.White, AntiAlias = true };
+    private readonly Paint _back = new() { FilterBitmap = true };
+    private readonly Paint _text = new() { Color = Color.White, AntiAlias = true };
     private volatile string? _status;
     private readonly TouchMouse _touch;
 
@@ -234,7 +277,7 @@ internal sealed class GameView : View
     {
         Focusable = true;
         FocusableInTouchMode = true;
-        SetBackgroundColor(Android.Graphics.Color.Black);
+        SetBackgroundColor(Color.Black);
         _text.TextSize = 16 * context.Resources!.DisplayMetrics!.Density;
         _touch = new TouchMouse(this, context.Resources.DisplayMetrics.Density);
     }
@@ -280,6 +323,12 @@ internal sealed class GameView : View
             foreach (string line in status.Split('\n').Take(40)) { canvas.DrawText(line, 40, y, _text); y += _text.TextSize * 1.3f; }
             return;
         }
+        if (Backdrop.Image is { } bg && Backdrop.OpacityPercent > 0)
+        {
+            float bw = Width * Backdrop.WidthPercent / 100f, bh = Height * Backdrop.HeightPercent / 100f;
+            _back.Alpha = Backdrop.OpacityPercent * 255 / 100;
+            canvas.DrawBitmap(bg, null, new RectF((Width - bw) / 2, (Height - bh) / 2, (Width + bw) / 2, (Height + bh) / 2), _back);
+        }
         lock (_gate)
         {
             if (_bitmap == null) return;
@@ -289,318 +338,231 @@ internal sealed class GameView : View
     }
 
     public override bool OnTouchEvent(MotionEvent? e) => e != null && _touch.Handle(e);
+}
 
-    // ── 글 입력(안드로이드 키보드) ──
-    private bool _keyboard;
+/// <summary>설정 > 화면 > 배경 그림 — 앱 폴더에 그림을 복사해 두고 크기 · 불투명도를 적어 둔다.</summary>
+internal static class Backdrop
+{
+    private static string _dir = "";
+    public static Bitmap? Image { get; private set; }
+    public static bool Has => Image != null;
+    public static int WidthPercent = 100, HeightPercent = 100, OpacityPercent = 100;
 
-    public void ToggleKeyboard()
+    private static string ImagePath => Path.Combine(_dir, "backdrop.img");
+    private static string SettingsPath => Path.Combine(_dir, "backdrop.txt");
+
+    public static void Load(string dir)
     {
-        var imm = (InputMethodManager)Context!.GetSystemService(Context.InputMethodService)!;
-        _keyboard = !_keyboard;
-        RequestFocus();
-        if (_keyboard) imm.ShowSoftInput(this, ShowFlags.Forced);
-        else imm.HideSoftInputFromWindow(WindowToken, HideSoftInputFlags.None);
+        _dir = dir;
+        try
+        {
+            if (File.Exists(SettingsPath) && File.ReadAllText(SettingsPath).Split(',') is [var w, var h, var o])
+                (WidthPercent, HeightPercent, OpacityPercent) = (int.Parse(w), int.Parse(h), int.Parse(o));
+            if (Image == null && File.Exists(ImagePath)) Image = Decode(ImagePath);
+        }
+        catch (Exception) { }
     }
 
-    public override bool OnCheckIsTextEditor() => true;
-
-    public override IInputConnection? OnCreateInputConnection(EditorInfo? outAttrs)
+    public static void Save()
     {
-        if (outAttrs != null)
-        {
-            outAttrs.InputType = Android.Text.InputTypes.ClassText | Android.Text.InputTypes.TextFlagNoSuggestions;
-            outAttrs.ImeOptions = ImeFlags.NoFullscreen | (ImeFlags)ImeAction.Done;
-        }
-        return new CharInput(this);
+        try { File.WriteAllText(SettingsPath, $"{WidthPercent},{HeightPercent},{OpacityPercent}"); } catch (Exception) { }
     }
 
-    /// <summary>키보드가 친 글자를 WM_CHAR 로, 지우기를 Backspace 로.</summary>
-    private sealed class CharInput(View view) : BaseInputConnection(view, false)
+    public static void SetImage(Stream src)
     {
-        public override bool CommitText(Java.Lang.ICharSequence? text, int newCursorPosition)
-        {
-            foreach (char c in text?.ToString() ?? "")
-            {
-                if (c == '\n') { PlatformHost.Key(Win32.VK_RETURN, true); PlatformHost.Key(Win32.VK_RETURN, false); }
-                else PlatformHost.Char(c);
-            }
-            return true;
-        }
+        using (var dst = File.Create(ImagePath)) src.CopyTo(dst);
+        Image = Decode(ImagePath) ?? throw new IOException("그림 파일이 아닙니다");
+        Save();
+    }
 
-        public override bool DeleteSurroundingText(int beforeLength, int afterLength)
-        {
-            for (int i = 0; i < Math.Max(1, beforeLength); i++) { PlatformHost.Key(Win32.VK_BACK, true); PlatformHost.Key(Win32.VK_BACK, false); PlatformHost.Char('\b'); }
-            return true;
-        }
+    public static void Clear()
+    {
+        Image = null;
+        try { File.Delete(ImagePath); } catch (Exception) { }
+    }
+
+    /// <summary>큰 사진은 화면 크기 정도로 줄여 읽는다(메모리).</summary>
+    private static Bitmap? Decode(string path)
+    {
+        var bounds = new BitmapFactory.Options { InJustDecodeBounds = true };
+        BitmapFactory.DecodeFile(path, bounds);
+        int sample = 1;
+        while (bounds.OutWidth / (sample * 2) >= 1920 || bounds.OutHeight / (sample * 2) >= 1920) sample *= 2;
+        return BitmapFactory.DecodeFile(path, new BitmapFactory.Options { InSampleSize = sample });
     }
 }
 
 /// <summary>
-/// 터치 → 마우스(창 좌표). 누르고 떼기 = 왼쪽 클릭, 끌기 = 왼쪽 끌기, 길게 누르기 = 오른쪽 클릭,
-/// 두 손가락 위아래 = 휠, 두 손가락 톡 = 오른쪽 클릭 (iOS 판 TouchInput 과 같은 짜임 — docs/iOS-포팅-참고.md).
+/// 단축 아이콘 — 패드가 없을 때 원본 패드 동작을 화면 양옆 단추로(사용자 확정 시안 docs/mockup/shortcut-battle.png · shortcut-story.png).
+/// 전투 중: 왼쪽 시스템 메뉴 · 배속 · 조작 안내 · 취소 / 오른쪽 공격 · 어빌리티 · 아이템 · 휴식 · 링 커맨드 · 상태 · 이전 인물 · 다음 인물.
+/// 그 밖(이야기 · 필드 · 모세스): 왼쪽 시스템 메뉴 · 배속 / 오른쪽 확인 · 취소. 타이틀에서는 숨긴다. 실제 패드가 있으면 모두 숨긴다.
+/// 단추를 누른 터치는 게임으로 넘어가지 않는다(iOS i8). 각 단추는 PC 판 키 설정의 그 동작 키를 보낸다(패드 동작도 같은 키를 보낸다 — GamePad.KeyOf).
 /// </summary>
-internal sealed class TouchMouse(GameView view, float density)
+internal sealed class Shortcuts
 {
-    private const int LongPressMs = 450;
-    private readonly float _slop = 12 * density;
-    private float _downX, _downY, _lastWheelY;
-    private bool _dragging, _rightDone, _multi, _wheeled;
-    private Java.Lang.IRunnable? _longPress;
+    private readonly Activity _activity;
+    private readonly GameView _view;
+    private readonly LinearLayout _left, _right;
+    private readonly float _dp;
+    private string _mode = "";
+    private TextView? _speed;
 
-    private (int X, int Y) ToClient(float x, float y)
+    public Shortcuts(Activity activity, FrameLayout root, GameView view)
     {
-        var (ox, oy, s) = view.Placement;
-        if (s <= 0) return (0, 0);
-        return ((int)Math.Clamp((x - ox) / s, 0, PlatformHost.ClientW - 1), (int)Math.Clamp((y - oy) / s, 0, PlatformHost.ClientH - 1));
+        _activity = activity;
+        _view = view;
+        _dp = activity.Resources!.DisplayMetrics!.Density;
+        _left = Column(root, GravityFlags.Left);
+        _right = Column(root, GravityFlags.Right);
+        Tick();
     }
 
-    public bool Handle(MotionEvent e)
+    private LinearLayout Column(FrameLayout root, GravityFlags side)
     {
-        switch (e.ActionMasked)
+        var col = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
+        col.SetGravity(GravityFlags.Center);
+        root.AddView(col, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, ViewGroup.LayoutParams.MatchParent, side | GravityFlags.CenterVertical));
+        return col;
+    }
+
+    public void Refresh() => _activity.RunOnUiThread(() => Apply(Mode()));
+
+    private void Tick()
+    {
+        Apply(Mode());
+        _view.PostDelayed(Tick, 300);
+    }
+
+    private static string Mode()
+    {
+        if (PadInput.RealPad || GameActivity.Game is not { } g) return "none";
+        try
         {
-            case MotionEventActions.Down:
-            {
-                (_downX, _downY) = (e.GetX(), e.GetY());
-                _dragging = _rightDone = _multi = _wheeled = false;
-                var (cx, cy) = ToClient(_downX, _downY);
-                PlatformHost.Mouse(Win32.WM_MOUSEMOVE, cx, cy);
-                _longPress = new Java.Lang.Runnable(() =>
-                {
-                    if (_dragging || _multi) return;
-                    _rightDone = true;
-                    PlatformHost.Mouse(Win32.WM_RBUTTONDOWN, cx, cy);
-                    PlatformHost.Mouse(Win32.WM_RBUTTONUP, cx, cy);
-                    view.PerformHapticFeedback(FeedbackConstants.LongPress);
-                });
-                view.PostDelayed(_longPress, LongPressMs);
-                return true;
-            }
-            case MotionEventActions.PointerDown:
-                CancelLongPress();
-                if (_dragging) { var (ux, uy) = ToClient(e.GetX(0), e.GetY(0)); PlatformHost.Mouse(Win32.WM_LBUTTONUP, ux, uy); _dragging = false; }
-                _multi = true;
-                _lastWheelY = (e.GetY(0) + e.GetY(1)) / 2;
-                return true;
-            case MotionEventActions.Move:
-            {
-                if (_rightDone) return true;
-                if (_multi && e.PointerCount >= 2)
-                {
-                    float y = (e.GetY(0) + e.GetY(1)) / 2, step = 40 * density;
-                    while (Math.Abs(y - _lastWheelY) >= step)
-                    {
-                        int dir = y > _lastWheelY ? 1 : -1;   // 손가락을 아래로 = 위로 굴리기(휠 +)
-                        var (wx, wy) = ToClient(e.GetX(0), e.GetY(0));
-                        PlatformHost.Wheel(120 * dir, wx, wy);
-                        _lastWheelY += step * dir;
-                        _wheeled = true;
-                    }
-                    return true;
-                }
-                if (_multi) return true;
-                var (cx, cy) = ToClient(e.GetX(), e.GetY());
-                if (!_dragging && Math.Abs(e.GetX() - _downX) + Math.Abs(e.GetY() - _downY) > _slop)
-                {
-                    CancelLongPress();
-                    _dragging = true;
-                    var (sx, sy) = ToClient(_downX, _downY);
-                    PlatformHost.Mouse(Win32.WM_LBUTTONDOWN, sx, sy);
-                }
-                PlatformHost.Mouse(Win32.WM_MOUSEMOVE, cx, cy);
-                return true;
-            }
-            case MotionEventActions.Up:
-            {
-                CancelLongPress();
-                var (cx, cy) = ToClient(e.GetX(), e.GetY());
-                if (_multi)
-                {
-                    if (!_wheeled) { PlatformHost.Mouse(Win32.WM_RBUTTONDOWN, cx, cy); PlatformHost.Mouse(Win32.WM_RBUTTONUP, cx, cy); }
-                }
-                else if (_rightDone) { }
-                else if (_dragging) PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
-                else
-                {
-                    PlatformHost.Mouse(Win32.WM_MOUSEMOVE, cx, cy);
-                    PlatformHost.Mouse(Win32.WM_LBUTTONDOWN, cx, cy);
-                    PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
-                }
-                _dragging = false;
-                return true;
-            }
-            case MotionEventActions.Cancel:
-                CancelLongPress();
-                if (_dragging) { var (cx, cy) = ToClient(e.GetX(), e.GetY()); PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy); }
-                _dragging = false;
-                return true;
+            if (g.TitleScr._titleOpen || g.Part1TitleScr._open) return "none";
+            bool battle = g._battleLoaded && g.BoardIsMap && !g.Fld.FieldOpen && !g.Mos._mosesOpen && !g.EpisodesScr._episodesOpen;
+            return battle ? "battle" : "story";
         }
-        return true;
+        catch (Exception) { return "story"; }
     }
 
-    private void CancelLongPress()
+    private void Apply(string mode)
     {
-        if (_longPress != null) view.RemoveCallbacks(_longPress);
-        _longPress = null;
+        if (_speed != null && GameActivity.Game is { } game) _speed.Text = SpeedLabel(game);
+        if (mode == _mode) { Layout(); return; }
+        _mode = mode;
+        _left.RemoveAllViews();
+        _right.RemoveAllViews();
+        _speed = null;
+        if (mode == "none") return;
+        Add(_left, "≡", "시스템 메뉴", false, () => Key(KeyAction.System, Win32.VK_ESCAPE));
+        _speed = Add(_left, "»", "배속 1×", false, NextSpeed);
+        if (mode == "battle")
+        {
+            Add(_left, "?", "조작 안내", false, () => Key(KeyAction.KeyHelp, 0));
+            Add(_left, "✕", "취소", false, () => Tap(Win32.VK_ESCAPE));
+            Add(_right, "▲", "공격", true, () => Key(KeyAction.Attack, 0));
+            Add(_right, "★", "어빌리티", true, () => Key(KeyAction.Ability, 0));
+            Add(_right, "◆", "아이템", false, () => Key(KeyAction.Item, 0));
+            Add(_right, "Z", "휴식", false, () => Key(KeyAction.Rest, 0));
+            Add(_right, "◎", "링 커맨드", false, () => Key(KeyAction.Ring, 0));
+            Add(_right, "ⓘ", "상태", false, () => Key(KeyAction.Status, 0));
+            Add(_right, "◀", "이전 인물", false, () => Unit(-1));
+            Add(_right, "▶", "다음 인물", false, () => Unit(1));
+        }
+        else
+        {
+            Add(_right, "●", "확인", true, () => Tap(Win32.VK_RETURN));
+            Add(_right, "✕", "취소", false, () => Tap(Win32.VK_ESCAPE));
+        }
+        Layout();
     }
+
+    /// <summary>단추 크기 · 투명도 — 옆 여백이 넉넉하면 여백에, 좁으면(16:9 해상도) 게임 위에 반투명하게.</summary>
+    private void Layout()
+    {
+        if (_mode == "none" || _view.Width == 0) return;
+        var (x, _, _) = _view.Placement;
+        int rows = Math.Max(_left.ChildCount, _right.ChildCount);
+        int h = (int)Math.Min(64 * _dp, (_view.Height - 16 * _dp) / Math.Max(1, rows) - 6 * _dp);
+        bool roomy = x >= 72 * _dp;
+        int w = (int)(roomy ? Math.Min(x - 16 * _dp, 110 * _dp) : 72 * _dp);
+        float alpha = roomy ? 0.85f : 0.45f;
+        foreach (var col in new[] { _left, _right })
+        {
+            col.Alpha = alpha;
+            for (int i = 0; i < col.ChildCount; i++)
+            {
+                var child = col.GetChildAt(i)!;
+                var lp = (LinearLayout.LayoutParams)child.LayoutParameters!;
+                if (lp.Width != w || lp.Height != h) { lp.Width = w; lp.Height = h; child.LayoutParameters = lp; }
+            }
+            var flp = (FrameLayout.LayoutParams)col.LayoutParameters!;
+            int margin = (int)(roomy ? (x - w) / 2 : 4 * _dp);
+            if (flp.LeftMargin != margin) { flp.LeftMargin = flp.RightMargin = margin; col.LayoutParameters = flp; }
+        }
+    }
+
+    private TextView Add(LinearLayout col, string icon, string label, bool strong, Action press)
+    {
+        var b = new TextView(_activity) { Gravity = GravityFlags.Center };
+        b.SetTextColor(Color.White);
+        b.Text = icon + "\n" + label;
+        b.TextSize = 11;
+        var bg = new GradientDrawable();
+        bg.SetCornerRadius(12 * _dp);
+        bg.SetColor(strong ? Color.Argb(200, 200, 150, 40) : Color.Argb(200, 40, 40, 60));
+        bg.SetStroke((int)(1.5f * _dp), Color.Argb(150, 255, 255, 255));
+        b.Background = bg;
+        b.Click += (_, _) => { b.PerformHapticFeedback(FeedbackConstants.VirtualKey); press(); };
+        var lp = new LinearLayout.LayoutParams((int)(100 * _dp), (int)(60 * _dp)) { TopMargin = (int)(3 * _dp), BottomMargin = (int)(3 * _dp) };
+        col.AddView(b, lp);
+        return b;
+    }
+
+    /// <summary>PC 판 키 설정의 그 동작 키를 누르고 뗀다(없으면 <paramref name="fallback"/>).</summary>
+    private static void Key(KeyAction action, int fallback)
+    {
+        int vk = fallback;
+        try { if (GameActivity.Game is { } g && g._keys[action] is var k and > 0) vk = k; } catch (Exception) { }
+        if (vk != 0) Tap(vk);
+    }
+
+    private static void Tap(int vk) { PlatformHost.Key(vk, true); PlatformHost.Key(vk, false); }
+
+    /// <summary>이전 · 다음 인물 — 원본 패드 LB · RB 와 같이(GamePad: CycleReadyUnit(∓1)). 전투 밖이면 다음 인물 키.</summary>
+    private static void Unit(int dir) => PlatformHost.RunOnGame(() =>
+    {
+        if (GameActivity.Game is not { } g) return;
+        if (!g.Btl._abilityMenu && g.Btl._targetWork < 0 && g._battleLoaded) g.Btl.CycleReadyUnit(dir);
+        else Key(KeyAction.NextUnit, 0);
+    });
+
+    /// <summary>배속 — 설정 > 게임 > 게임 속도와 같은 값(보통 · 1.5배 · 2배)을 돌린다(iOS 판과 같은 짜임).</summary>
+    private static void NextSpeed() => PlatformHost.RunOnGame(() =>
+    {
+        if (GameActivity.Game is not { } g) return;
+        int i = Math.Max(0, Array.IndexOf(GameWindow.SpeedChoices, g._gameSpeed));
+        g.OnMenuCommand(GameWindow.MenuSpeedBase + (i + 1) % GameWindow.SpeedChoices.Length);
+    });
+
+    private static string SpeedLabel(GameWindow g) => "»\n배속 " + (g._gameSpeed / 100.0).ToString("0.#") + "×";
 }
 
-/// <summary>안드로이드 키 → 윈도우 가상 키(VK). 키보드 · 리모컨 · 「뒤로」(= Esc).</summary>
-internal static class KeyMap
+/// <summary>앱이 터진 까닭 · 안드로이드가 앱을 닫은 까닭을 적어 둔다(「잠깐 나갔다 오면 다시 시작」 원인 찾기).</summary>
+internal static class CrashLog
 {
-    public static int ToVk(Keycode k)
+    private static string _dir = "";
+
+    public static void Install(string dir)
     {
-        if (k >= Keycode.A && k <= Keycode.Z) return 'A' + (k - Keycode.A);
-        if (k >= Keycode.Num0 && k <= Keycode.Num9) return '0' + (k - Keycode.Num0);
-        if (k >= Keycode.F1 && k <= Keycode.F12) return 0x70 + (k - Keycode.F1);
-        return k switch
-        {
-            Keycode.Back or Keycode.Escape => Win32.VK_ESCAPE,
-            Keycode.Enter or Keycode.NumpadEnter or Keycode.DpadCenter => Win32.VK_RETURN,
-            Keycode.Space => Win32.VK_SPACE,
-            Keycode.DpadLeft => Win32.VK_LEFT,
-            Keycode.DpadRight => Win32.VK_RIGHT,
-            Keycode.DpadUp => Win32.VK_UP,
-            Keycode.DpadDown => Win32.VK_DOWN,
-            Keycode.Tab => Win32.VK_TAB,
-            Keycode.Del => Win32.VK_BACK,
-            Keycode.ShiftLeft or Keycode.ShiftRight => Win32.VK_SHIFT,
-            Keycode.PageUp => Win32.VK_PRIOR,
-            Keycode.PageDown => Win32.VK_NEXT,
-            Keycode.MoveHome => Win32.VK_HOME,
-            Keycode.MoveEnd => Win32.VK_END,
-            Keycode.CtrlLeft or Keycode.CtrlRight => 0x11,
-            Keycode.AltLeft or Keycode.AltRight => 0x12,
-            Keycode.Minus => 0xBD,
-            Keycode.Equals => 0xBB,
-            Keycode.Comma => 0xBC,
-            Keycode.Period => 0xBE,
-            Keycode.Slash => 0xBF,
-            Keycode.Grave => 0xC0,
-            _ => 0,
-        };
+        if (_dir.Length > 0) return;
+        _dir = dir;
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => { if (e.ExceptionObject is Exception ex) Write("처리 안 된 예외", ex); };
+        Android.Runtime.AndroidEnvironment.UnhandledExceptionRaiser += (_, e) => Write("안드로이드 예외", e.Exception);
     }
 
-    public static bool Repeats(int vk) => vk is Win32.VK_LEFT or Win32.VK_RIGHT or Win32.VK_UP or Win32.VK_DOWN or Win32.VK_BACK;
-}
-
-/// <summary>
-/// 게임 패드 → XInput 꼴(PadState). 원본 GamePad 가 그 상태로 키 · 마우스 조작을 한다(PC 판과 같은 패드 조작 — 사용자 결정: 패드 = 키보드 · 마우스 매핑).
-/// </summary>
-internal static class PadInput
-{
-    public static void Refresh()
+    public static void Write(string where, Exception ex)
     {
-        bool any = false;
-        foreach (int id in InputDevice.GetDeviceIds() ?? [])
-            if (InputDevice.GetDevice(id) is { } d && IsPad(d.Sources)) any = true;
-        PadState.Connected = any;
-    }
-
-    private static bool IsPad(InputSourceType s) => (s & InputSourceType.Gamepad) == InputSourceType.Gamepad || (s & InputSourceType.Joystick) == InputSourceType.Joystick;
-
-    public static bool Key(KeyEvent e)
-    {
-        if (!IsPad(e.Source)) return false;
-        ushort bit = e.KeyCode switch
-        {
-            Keycode.ButtonA => PadState.A,
-            Keycode.ButtonB => PadState.B,
-            Keycode.ButtonX => PadState.X,
-            Keycode.ButtonY => PadState.Y,
-            Keycode.ButtonL1 => PadState.LeftShoulder,
-            Keycode.ButtonR1 => PadState.RightShoulder,
-            Keycode.ButtonThumbl => PadState.LeftThumb,
-            Keycode.ButtonThumbr => PadState.RightThumb,
-            Keycode.ButtonStart => PadState.Start,
-            Keycode.ButtonSelect or Keycode.Back => PadState.Back,
-            Keycode.DpadUp => PadState.DPadUp,
-            Keycode.DpadDown => PadState.DPadDown,
-            Keycode.DpadLeft => PadState.DPadLeft,
-            Keycode.DpadRight => PadState.DPadRight,
-            _ => 0,
-        };
-        if (e.KeyCode is Keycode.ButtonL2 or Keycode.ButtonR2)
-        {
-            lock (PadState.Gate)
-            {
-                byte v = e.Action == KeyEventActions.Down ? (byte)255 : (byte)0;
-                if (e.KeyCode == Keycode.ButtonL2) PadState.LeftTrigger = v; else PadState.RightTrigger = v;
-                PadState.Packet++;
-            }
-            PadState.Connected = true;
-            return true;
-        }
-        if (bit == 0) return false;
-        PadState.Connected = true;
-        if (e.Action == KeyEventActions.Down) PadState.Set(bit, true);
-        else if (e.Action == KeyEventActions.Up) PadState.Set(bit, false);
-        return true;
-    }
-
-    public static bool Motion(MotionEvent e)
-    {
-        if (!IsPad(e.Source) || e.Action != MotionEventActions.Move) return false;
-        PadState.Connected = true;
-        static short ToShort(float v) => (short)Math.Clamp(v * 32767, -32767, 32767);
-        lock (PadState.Gate)
-        {
-            PadState.LX = ToShort(e.GetAxisValue(Axis.X));
-            PadState.LY = ToShort(-e.GetAxisValue(Axis.Y));
-            PadState.RX = ToShort(e.GetAxisValue(Axis.Z));
-            PadState.RY = ToShort(-e.GetAxisValue(Axis.Rz));
-            float lt = Math.Max(e.GetAxisValue(Axis.Ltrigger), e.GetAxisValue(Axis.Brake));
-            float rt = Math.Max(e.GetAxisValue(Axis.Rtrigger), e.GetAxisValue(Axis.Gas));
-            PadState.LeftTrigger = (byte)Math.Clamp(lt * 255, 0, 255);
-            PadState.RightTrigger = (byte)Math.Clamp(rt * 255, 0, 255);
-            // 십자키가 축(HAT)으로 오는 패드
-            float hx = e.GetAxisValue(Axis.HatX), hy = e.GetAxisValue(Axis.HatY);
-            ushort b = (ushort)(PadState.Buttons & ~(PadState.DPadLeft | PadState.DPadRight | PadState.DPadUp | PadState.DPadDown));
-            if (hx < -0.5f) b |= PadState.DPadLeft;
-            if (hx > 0.5f) b |= PadState.DPadRight;
-            if (hy < -0.5f) b |= PadState.DPadUp;
-            if (hy > 0.5f) b |= PadState.DPadDown;
-            PadState.Buttons = b;
-            PadState.Packet++;
-        }
-        return true;
-    }
-}
-
-/// <summary>APK 에 실은 우리 파일(PC 판이 exe 옆에 두는 것: assets/ JSON · 꺼낼 목록 · 아이콘 · 그림 예제, 릴리즈노트.md, contributor.md)을 실행 파일 자리로 꺼낸다.</summary>
-internal static class ShippedFiles
-{
-    public static void Extract(Android.Content.Res.AssetManager assets, string filesDir, Action<string> status)
-    {
-        // 원본 코드는 AppContext.BaseDirectory 옆에서 찾는다(AssetsFolder.Shipped · ReleaseNotesScreen). 거기에 쓸 수 있으면 거기에.
-        string target = AppContext.BaseDirectory;
-        if (GameSetup.Writable(target) == null) throw new IOException($"실행 파일 자리에 쓸 수 없습니다: {target}");
-        string stamp = Path.Combine(target, ".shipped-version");
-        string version = typeof(ShippedFiles).Assembly.ManifestModule.ModuleVersionId.ToString();
-        if (File.Exists(stamp) && File.ReadAllText(stamp) == version) return;
-        status("게임 파일을 꺼내는 중…");
-        Copy(assets, "shipped", target);
-        File.WriteAllText(stamp, version);
-    }
-
-    private static void Copy(Android.Content.Res.AssetManager assets, string from, string to)
-    {
-        string[] names = assets.List(from) ?? [];
-        if (names.Length == 0)
-        {
-            // 파일
-            Directory.CreateDirectory(Path.GetDirectoryName(to)!);
-            using var src = assets.Open(from);
-            if (Path.GetFileName(to) == "릴리즈노트.md")
-            {
-                using var reader = new StreamReader(src);
-                File.WriteAllText(to, ReleaseNotesTrim.Head(reader.ReadToEnd()));
-                return;
-            }
-            using var dst = File.Create(to);
-            src.CopyTo(dst);
-            return;
-        }
-        Directory.CreateDirectory(to);
-        foreach (string name in names) Copy(assets, from + "/" + name, Path.Combine(to, name));
+        try { File.AppendAllText(Path.Combine(_dir, "crash.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {where}\n{ex}\n\n"); } catch (Exception) { }
     }
 }
