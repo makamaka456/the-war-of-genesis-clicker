@@ -41,8 +41,9 @@ internal sealed class TouchMouse(GameView view, float density)
             {
                 (_downX, _downY) = (e.GetX(), e.GetY());
                 _dragging = _rightDone = _multi = _wheeled = false;
+                // 누르는 순간에는 마우스를 옮기지 않는다 — 누르는 동안 커서가 창 위쪽 탭(화면 가장자리)에 머물면 원본 가장자리 스크롤이
+                // 틀마다 맵을 밀었다(사용자 보고). 떼는 순간 「옮기기 → 클릭 → 화면 밖으로」를 한꺼번에 보낸다(Up · Park).
                 var (cx, cy) = ToClient(_downX, _downY);
-                PlatformHost.Mouse(Win32.WM_MOUSEMOVE, cx, cy);
                 _longPress = new Java.Lang.Runnable(() =>
                 {
                     if (_dragging || _multi) return;

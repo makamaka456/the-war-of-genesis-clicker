@@ -200,8 +200,10 @@ internal sealed partial class GamePad
         {
             var (ox, oy) = host.Mos.MosesOrigin();
             foreach (var (x, y, _) in TitleScreen.TitleButtons) list.Add((ox + x, oy + y, TitleScreen.TitleButtonW, TitleScreen.TitleButtonH));
+#if !ANDROID   // 안드로이드: 버그 리포트 단추 없음
             var (bx, by, bw, bh) = TitleScreen.BugButton;   // 오른쪽 아래 「버그 리포트」
             list.Add((ox + bx, oy + by, bw, bh));
+#endif
             return list;
         }
         if (host.Mos._mosesOpen) MosesTargets(list);
