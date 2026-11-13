@@ -120,9 +120,6 @@ internal sealed unsafe partial class GameWindow
     /// <summary>시험 전용: 결과·행선지 줄 — 켜졌을 때만 적는다.</summary>
     internal static void TestRunTrace(string line)
     {
-#if ANDROID
-        AndroidHooks.Trace(line);   // 안드로이드: 도구 > 「진단 기록」에 보인다(폰에서만 생기는 일을 찾으려고)
-#endif
         if (!TestRun) return;
         try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "dueldx_trace.log"), "testrun " + line + Environment.NewLine); }
         catch (IOException) { }

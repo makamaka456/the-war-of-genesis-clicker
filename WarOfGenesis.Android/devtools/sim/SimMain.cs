@@ -148,7 +148,19 @@ internal static class SimMain
                     });
                     break;
                 case "movie": { int n = I(1); PlatformHost.RunOnGame(() => Log($"영상 {n} 걸기: {GameWindow._active?.Cut.StartMovie(n)}")); break; }
-                case "trace": Log("진단 기록:\n" + AndroidHooks.TraceText()); break;
+                case "tap":   // 폰 터치 탭과 같게 — 옮기기 · 누르기 · 떼기 · 화면 밖으로를 한 묶음(Droid/Input.cs TouchMouse)
+                {
+                    int tx = I(1), ty = I(2);
+                    PlatformHost.Batch(() =>
+                    {
+                        PlatformHost.Mouse(Win32.WM_MOUSEMOVE, tx, ty);
+                        PlatformHost.Mouse(Win32.WM_LBUTTONDOWN, tx, ty);
+                        PlatformHost.Mouse(Win32.WM_LBUTTONUP, tx, ty);
+                        PlatformHost.Mouse(Win32.WM_MOUSEMOVE, -1, -1);
+                    });
+                    break;
+                }
+                case "cam": PlatformHost.RunOnGame(() => { var g = GameWindow._active!; Log($"카메라 x={g.Btl._camPosX:F0} y={g.Btl._camPos:F0} 마우스뷰={g.Btl._mouseView} 모드창={g.TuningScr._tuningOpen}"); }); break;
                 case "audio": Log($"소리 장치로 나간 바이트: {PacedSink.BytesOut:N0}"); break;
                 case "files": foreach (var f in Directory.EnumerateFiles(Environment.GetEnvironmentVariable("DUELDX_SAVEDIR")!, p.Length > 1 ? p[1] : "*", SearchOption.TopDirectoryOnly)) Log("  " + Path.GetFileName(f) + " " + new FileInfo(f).Length); break;
                 default: Log("모르는 줄: " + line); break;

@@ -83,7 +83,6 @@ internal sealed unsafe class TitleScreen(GameWindow host)
     /// </summary>
     private void PlayOpening()
     {
-        GameWindow.TestRunTrace($"opening flag={host._openingMovie} part1only={OriginalGameSetup.Part1Only} title={_titleOpen} file={CutscenePlayer.FindOriginal(OpeningMovie)?.ToString() ?? "없음"}");
         if (!host._openingMovie || OriginalGameSetup.Part1Only || !_titleOpen) return;
         if (!host.Cut.StartMovie(OpeningMovie, originalOnly: true)) return;   // 원본 폴더의 Mov 0008 을 바로 푼다 — 없으면 그냥 타이틀
         host.StopMusic();

@@ -51,25 +51,6 @@ internal static class AndroidHooks
         return list;
     }
 
-    // ── 진단 기록(잠시 — 폰에서만 생기는 일을 찾으려고. 원인을 찾으면 뺀다) ──
-    private static readonly Queue<string> TraceLines = new();
-    private static readonly System.Diagnostics.Stopwatch TraceClock = System.Diagnostics.Stopwatch.StartNew();
-
-    /// <summary>원본 GameWindow.TestRunTrace 가 부른다 — 최근 줄 몇 개를 시각(앱 켠 뒤 초)과 함께 둔다.</summary>
-    internal static void Trace(string line)
-    {
-        lock (TraceLines)
-        {
-            TraceLines.Enqueue($"{TraceClock.Elapsed.TotalSeconds,7:F2}s  {line}");
-            while (TraceLines.Count > 60) TraceLines.Dequeue();
-        }
-    }
-
-    internal static string TraceText()
-    {
-        lock (TraceLines) return TraceLines.Count == 0 ? "(기록 없음)" : string.Join("\n", TraceLines);
-    }
-
     internal static string BackdropName() => BackdropNameOf?.Invoke() ?? "없음";
 
     internal static void OpenBackdrop(GameWindow host) => ShowBackdrop?.Invoke();

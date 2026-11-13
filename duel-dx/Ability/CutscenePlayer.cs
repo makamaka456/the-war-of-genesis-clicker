@@ -215,8 +215,7 @@ internal sealed unsafe class CutscenePlayer(GameWindow host)
         if (_clip == null)
         {
             if (!_queue.TryDequeue(out int movie)) return;
-            GameWindow.TestRunTrace($"cut open {movie:D4}");
-            if (Open(movie) is not { } clip) { GameWindow.TestRunTrace($"cut open {movie:D4} 실패 — 넘김"); return; }       // 못 읽는 파일은 넘긴다
+            if (Open(movie) is not { } clip) return;       // 못 읽는 파일은 넘긴다
             _clip = clip;
             _frameW = clip.Width;
             _frameH = clip.Height;
@@ -229,7 +228,6 @@ internal sealed unsafe class CutscenePlayer(GameWindow host)
         if (!_soundStarted)
         {
             if (!_clip.Ready) { _clipStart = realTime; return; }
-            GameWindow.TestRunTrace("cut first frame ready");
             _soundStarted = true;
             _clipStart = realTime;
             if (_clip.Sound != null && !GameWindow.Muted)
@@ -278,7 +276,6 @@ internal sealed unsafe class CutscenePlayer(GameWindow host)
     /// <summary>지금 영상을 넘긴다 — 남은 영상도 다 넘기고 전투로 돌아간다.</summary>
     internal void Skip()
     {
-        if (Playing) GameWindow.TestRunTrace("cut skip ← " + string.Join(" ← ", new System.Diagnostics.StackTrace(1, false).GetFrames().Take(3).Select(f => f.GetMethod()?.Name)));
         _queue.Clear();
         CloseClip();
         if (_loading != null || _video != null) FinishVideo(true);

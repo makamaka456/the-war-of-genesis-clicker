@@ -360,6 +360,9 @@ internal static class PlatformHost
     private static readonly bool[] Down = new bool[256];
     public static (int X, int Y) Cursor { get; private set; }
 
+    /// <summary>터치 손가락이 화면에 닿아 있나 — 그동안 원본의 가장자리 스크롤을 멈춘다(BattleScene.Camera.cs EdgePush, #if ANDROID).</summary>
+    public static volatile bool TouchHeld;
+
     public static bool IsDown(int vk) => (uint)vk < 256 && Down[vk];
 
     private static nint Pack(int x, int y) => (nint)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
