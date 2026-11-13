@@ -47,6 +47,18 @@ internal sealed class KeepAliveService : Service
 
     public override IBinder? OnBind(Intent? intent) => null;
 
+    /// <summary>
+    /// 최근 앱 목록에서 밀어 닫았다(「모두 닫기」 포함) — 게임까지 끝낸다(사용자 요청 2026-11-13). 이 서비스는 다른 앱에 잠깐 다녀오는 동안
+    /// 게임을 살려 두려는 것이다. 예전에는 밀어 닫아도 서비스가 프로세스를 붙잡아 게임 안 「종료」나 설정의 강제 중지로만 꺼졌다.
+    /// </summary>
+    public override void OnTaskRemoved(Intent? rootIntent)
+    {
+        base.OnTaskRemoved(rootIntent);
+        StopForeground(StopForegroundFlags.Remove);
+        StopSelf();
+        Android.OS.Process.KillProcess(Android.OS.Process.MyPid());
+    }
+
     public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
     {
         var manager = (NotificationManager)GetSystemService(NotificationService)!;
