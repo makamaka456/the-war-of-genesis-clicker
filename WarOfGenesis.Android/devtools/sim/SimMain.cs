@@ -117,6 +117,7 @@ internal static class SimMain
                 }
                 case "nopad": PadState.Connected = false; break;
                 case "menus": DumpMenu(Win32.MenuBar, ""); break;
+                case "movie": { int n = I(1); PlatformHost.RunOnGame(() => Log($"영상 {n} 걸기: {GameWindow._active?.Cut.StartMovie(n)}")); break; }
                 case "audio": Log($"소리 장치로 나간 바이트: {PacedSink.BytesOut:N0}"); break;
                 case "files": foreach (var f in Directory.EnumerateFiles(Environment.GetEnvironmentVariable("DUELDX_SAVEDIR")!, p.Length > 1 ? p[1] : "*", SearchOption.TopDirectoryOnly)) Log("  " + Path.GetFileName(f) + " " + new FileInfo(f).Length); break;
                 default: Log("모르는 줄: " + line); break;
