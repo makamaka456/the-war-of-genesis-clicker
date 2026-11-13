@@ -30,6 +30,11 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <!-- 파트1 엔딩 영상 해독기 — CI 가 NDK 로 libs/<abi>/libwogmpeg.so 를 굽는다(native/README.md) -->
+        <AndroidNativeLibrary Include="libs\**\libwogmpeg.so" />
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- ② 평소에도 힙이 커지면 일찍 정리 — Mono GC 설정(Droid/KeepAlive.cs) -->
         <AndroidEnvironment Include="Environment.txt" />
     </ItemGroup>

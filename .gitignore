@@ -31,3 +31,6 @@ publish/
 # 안드로이드 시험기가 만든 그림 · 결과 글이 저장소 맨 위에 쌓이지 않게
 /*.png
 /qa-*.txt
+
+# 엔딩 영상 해독기 — CI 가 굽는다
+/WarOfGenesis.Android/libs/

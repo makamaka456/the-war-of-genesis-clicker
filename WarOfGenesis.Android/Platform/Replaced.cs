@@ -68,9 +68,8 @@ internal static class MediaFoundationAudio
 }
 
 /// <summary>
-/// duel-dx/System/DirectShowVideo.cs 의 판 — 파트1 엔딩 영상(MPEG · AVI)을 튼다. 원본은 DirectShow 가 그림을 넘기지만,
-/// 안드로이드는 기기 재생기(MediaPlayer)가 게임 화면 위에 바로 그린다(<see cref="Player"/>). 그래서 <see cref="CopyFrame"/> 은 늘 false 다.
-/// 기기가 그 꼴을 못 틀면 열기에서 COMException — 원본 CutscenePlayer 가 「엔딩 영상을 틀 수 없습니다」로 넘긴다. 시험기는 늘 못 튼다.
+/// duel-dx/System/DirectShowVideo.cs 의 판 — 파트1 엔딩 영상(MPEG-1)을 튼다. 원본은 DirectShow 가 그림을 넘기고, 여기서는 앱 안의 해독기(<see cref="MpegVideo"/>,
+/// native/pl_mpeg)가 넘긴다 — 기기 재생기는 MPEG-1 을 못 틀었다(사용자 기기 2026-11-13). 못 열면 COMException — 원본이 「엔딩 영상을 틀 수 없습니다」로 넘긴다.
 /// </summary>
 internal sealed class DirectShowVideo : IDisposable
 {
@@ -80,10 +79,11 @@ internal sealed class DirectShowVideo : IDisposable
         int Width { get; }
         int Height { get; }
         bool Finished { get; }
+        bool CopyFrame(uint[] frame);
     }
 
     /// <summary>(파일, 소리 크기 0~1) → 재생기. 못 틀면 예외(사유 글).</summary>
-    internal static Func<string, float, IPlayer>? Player;
+    internal static Func<string, float, IPlayer>? Player = (path, volume) => MpegVideo.Open(path, volume);
 
     private readonly IPlayer _player;
     private DirectShowVideo(IPlayer player) { _player = player; }
@@ -99,6 +99,6 @@ internal sealed class DirectShowVideo : IDisposable
     }
 
     public bool Finished => _player.Finished;
-    public bool CopyFrame(uint[] frame) => false;
+    public bool CopyFrame(uint[] frame) => _player.CopyFrame(frame);
     public void Dispose() => _player.Dispose();
 }

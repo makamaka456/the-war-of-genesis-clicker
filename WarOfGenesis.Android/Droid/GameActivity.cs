@@ -30,7 +30,7 @@ public class GameActivity : Activity
         if (Game is not { } g) return;
         if (Part1EndingMovie.Find() is not { } file) { g.Toast("엔딩 영상 없음 — 파트1 폴더에서 Ending.pak · _sys2.cab 따위를 못 찾았습니다"); return; }
         g.Toast("엔딩 영상 준비 중… (" + Path.GetFileName(file) + ")");
-        g.Cut.StartVideo(() => Part1EndingMovie.Prepare(file), played => g.Toast(played ? "엔딩 영상 끝 — 기기에서 틀 수 있습니다" : "엔딩 영상을 틀 수 없습니다 — 기기가 이 영상 꼴(MPEG-1)을 모릅니다"));
+        g.Cut.StartVideo(() => Part1EndingMovie.Prepare(file), played => g.Toast(played ? "엔딩 영상 끝 — 기기에서 틀 수 있습니다" : "엔딩 영상을 틀 수 없습니다"));
     }
     private GameView _view = null!;
     private Shortcuts _shortcuts = null!;
@@ -50,7 +50,6 @@ public class GameActivity : Activity
         root.AddView(_view);
         _shortcuts = new Shortcuts(this, root, _view);
         SetContentView(root);
-        DirectShowVideo.Player = (path, volume) => VideoOverlay.Open(this, root, path, volume);
         // 화면이 다시 만들어져도(게임은 그대로 돈다) 새 화면에 이어 붙인다
         PlatformHost.Presenter = _view.Present;
         PlatformHost.ScreenOn = on => RunOnUiThread(() => { if (on) Window!.AddFlags(WindowManagerFlags.KeepScreenOn); else Window!.ClearFlags(WindowManagerFlags.KeepScreenOn); });

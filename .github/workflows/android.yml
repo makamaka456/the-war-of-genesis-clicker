@@ -65,6 +65,19 @@ jobs:
           -t:InstallAndroidDependencies -f net10.0-android
           -p:AndroidSdkDirectory="$ANDROID_HOME" -p:AcceptAndroidSDKLicenses=True
 
+      # 파트1 엔딩 영상 해독기(native/wogmpeg.c · pl_mpeg, MIT) — NDK clang 으로 ABI 마다 굽는다. APK 에는 libs/<abi>/libwogmpeg.so 로 실린다.
+      - name: Build MPEG decoder (NDK)
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          cd WarOfGenesis.Android
+          for pair in "arm64-v8a aarch64-linux-android24" "armeabi-v7a armv7a-linux-androideabi24" "x86_64 x86_64-linux-android24" "x86 i686-linux-android24"; do
+            set -- $pair
+            mkdir -p "libs/$1"
+            "$BIN/$2-clang" -O2 -shared -fPIC -Wl,-z,max-page-size=16384 -o "libs/$1/libwogmpeg.so" native/wogmpeg.c -lm
+          done
+          ls -l libs/*/
+
       # 서명은 디버그 키다(러너가 그때그때 만든다) — 새 버전을 깔려면 옛 앱을 지우고 깔아야 할 수 있다.
       - name: Publish APK
         run: >
@@ -82,6 +95,8 @@ jobs:
           dst="WarOfGenesis-${{ steps.version.outputs.version }}.apk"
           cp "$src" "$dst"
           ls -l "$dst"
+          # 엔딩 영상 해독기가 실렸나
+          unzip -l "$dst" | grep libwogmpeg.so || { echo "APK 에 libwogmpeg.so 가 없습니다"; exit 1; }
           echo "path=$dst" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact

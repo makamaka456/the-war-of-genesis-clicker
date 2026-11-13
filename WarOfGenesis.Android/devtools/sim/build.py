@@ -44,6 +44,9 @@ if errs:
     sys.exit('빌드 실패: 오류 %d' % len(errs))
 open(os.path.join(out, 'sim.runtimeconfig.json'), 'w').write('{"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.0"}}}')
 shutil.copy(os.path.join(here, 'pilserver.py'), out)
+# 파트1 엔딩 영상 해독기(native/wogmpeg.c · pl_mpeg) — 리눅스용으로 굽는다
+nr = subprocess.run(['gcc', '-O2', '-shared', '-fPIC', '-o', os.path.join(out, 'libwogmpeg.so'), os.path.join(pdir, 'native', 'wogmpeg.c'), '-lm'], capture_output=True, text=True)
+if nr.returncode != 0: sys.exit('해독기 빌드 실패: ' + nr.stderr[:2000])
 # PC 판이 exe 옆에 싣는 우리 파일 — 저장소 assets(JSON · 꺼낼 목록 · 아이콘 · 그림 예제)와 릴리즈 노트
 os.symlink(os.path.join(repo, 'assets'), os.path.join(out, 'assets'))
 shutil.copy(os.path.join(repo, 'contributor.md'), out)
