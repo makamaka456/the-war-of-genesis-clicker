@@ -126,6 +126,19 @@ internal static class SimMain
                         Log($"곡 {id}: {(pcm == null ? "없음" : $"{pcm.Samples.Length / Math.Max(1, pcm.Channels) / (double)pcm.SampleRate:F0}초 길이")} — 푸는 데 {sw.Elapsed.TotalSeconds:F2}초");
                     }
                     break;
+                case "mem":   // 메모리 — 프로세스 RSS · .NET 힙 · 정리(가장 센 GC) 뒤
+                {
+                    long Rss() => long.Parse(File.ReadAllLines("/proc/self/status").First(l => l.StartsWith("VmRSS")).Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]) / 1024;
+                    var info = GC.GetGCMemoryInfo();
+                    Log($"메모리: RSS {Rss()}MB · .NET 힙 {info.HeapSizeBytes >> 20}MB · 조각 {info.FragmentedBytes >> 20}MB");
+                    if (GameWindow._active is { } g)
+                        Log($"  글 그림 {g._textCache.Count}개 · 인물 그림 {g._sprites.Count}개 · 판 {g._fb.Length * 4 >> 20}MB");
+                    GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
+                    info = GC.GetGCMemoryInfo();
+                    Log($"  정리 뒤: RSS {Rss()}MB · .NET 힙 {info.HeapSizeBytes >> 20}MB");
+                    break;
+                }
                 case "ending":
                     PlatformHost.RunOnGame(() =>
                     {

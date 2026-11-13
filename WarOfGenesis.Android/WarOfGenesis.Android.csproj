@@ -30,6 +30,11 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <!-- ② 평소에도 힙이 커지면 일찍 정리 — Mono GC 설정(Droid/KeepAlive.cs) -->
+        <AndroidEnvironment Include="Environment.txt" />
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- PC 판(UseWindowsForms)은 System.Drawing 을 전역으로 쓴다 — 원본 파일이 using 없이 Bitmap 을 쓰는 곳이 있다. -->
         <Using Include="System.Drawing" />
     </ItemGroup>

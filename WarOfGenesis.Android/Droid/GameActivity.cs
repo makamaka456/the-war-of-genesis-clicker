@@ -63,6 +63,9 @@ public class GameActivity : Activity
         AndroidHooks.BackdropNameOf = () => Backdrop.Has ? "있음" : "없음";
         PadInput.Refresh();
         if (_game == null) StartGame();
+        KeepAliveService.Start(this);
+        if (OperatingSystem.IsAndroidVersionAtLeast(33) && CheckSelfPermission(Android.Manifest.Permission.PostNotifications) != Permission.Granted)
+            RequestPermissions([Android.Manifest.Permission.PostNotifications], 31);   // 알림줄 표시(③) — 거절해도 서비스는 돈다
     }
 
     private void HideBars()
@@ -86,6 +89,13 @@ public class GameActivity : Activity
         PadState.AppInFront = false;
         AndroidAudio.Pause(true);
         PlatformHost.Activate(false);
+        MemoryTrim.Trim();   // ① 뒤로 가면 정리
+    }
+
+    public override void OnTrimMemory(TrimMemory level)
+    {
+        base.OnTrimMemory(level);
+        if (level >= TrimMemory.UiHidden) MemoryTrim.Trim();
     }
 
     protected override void OnResume()
@@ -127,7 +137,7 @@ public class GameActivity : Activity
                     window.Run();
                 }
                 Game = null;
-                RunOnUiThread(FinishAffinity);
+                RunOnUiThread(() => { KeepAliveService.Stop(this); FinishAffinity(); });
             }
             catch (Exception ex)
             {
