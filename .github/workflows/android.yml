@@ -17,7 +17,14 @@ on:
       - 'duel-dx/**'
       - 'assets/**'
       - '.github/workflows/android.yml'
+  # 손으로 돌릴 때 release 에 android-vX.Y.Z 를 넣으면 그 이름으로 태그(지금 커밋)와 Releases 를 만든다 —
+  # 작업 환경이 태그를 밀 수 없을 때 쓰는 길(태그를 밀어도 같은 결과).
   workflow_dispatch:
+    inputs:
+      release:
+        description: '릴리즈 태그(android-vX.Y.Z). 비우면 굽기만 한다'
+        required: false
+        default: ''
 
 env:
   # 다음에 낼 안드로이드판 번호 — 브랜치에서 구운 APK(아티팩트)도 이 번호로 낸다.
@@ -50,12 +57,17 @@ jobs:
         id: version
         run: |
           # 앱 버전 — 태그(android-vX.Y.Z)면 그 번호, 브랜치 빌드면 다음에 낼 판 번호(APP_VERSION)를 쓴다.
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          rel="${{ github.event.inputs.release }}"
+          if [[ -n "$rel" && ! "$rel" =~ ^android-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "release 는 android-vX.Y.Z 꼴이어야 합니다: $rel"; exit 1; fi
+          if [[ -n "$rel" ]]; then
+            v="${rel#android-v}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             v="${GITHUB_REF_NAME#android-v}"
           else
             v="${APP_VERSION}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "release=${rel:-$([[ "$GITHUB_REF_TYPE" == "tag" ]] && echo "$GITHUB_REF_NAME")}" >> "$GITHUB_OUTPUT"
           echo "버전: $v (빌드 번호 $GITHUB_RUN_NUMBER)"
 
       # 러너에 깔린 SDK 에 이 워크로드가 바라는 플랫폼/빌드 도구가 없으면 채운다.
@@ -106,11 +118,11 @@ jobs:
           path: ${{ steps.apk.outputs.path }}
 
       - name: Upload to GitHub Releases
-        if: github.ref_type == 'tag'
+        if: steps.version.outputs.release != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="$GITHUB_REF_NAME"
+          tag="${{ steps.version.outputs.release }}"
           # 릴리즈 설명 — WarOfGenesis.Android/docs/안드로이드-릴리즈노트.md 의 「## <태그>」 대목(없으면 기본 글)
           awk -v t="## $tag" '$0==t{on=1;next} on&&/^## /{exit} on' WarOfGenesis.Android/docs/안드로이드-릴리즈노트.md > notes.md
           if [[ ! -s notes.md ]]; then echo "창세기전3 리메이크 안드로이드판 APK. 디버그 키로 서명했으므로 새 버전을 깔 때 옛 앱을 먼저 지워야 할 수 있습니다." > notes.md; fi
@@ -118,6 +130,6 @@ jobs:
             gh release upload "$tag" "${{ steps.apk.outputs.path }}" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$tag" "${{ steps.apk.outputs.path }}" --repo "$GITHUB_REPOSITORY" \
-              --title "안드로이드 $tag" \
+              --title "안드로이드 $tag" --target "$GITHUB_SHA" \
               --notes-file notes.md
           fi
