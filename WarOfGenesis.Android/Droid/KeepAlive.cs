@@ -65,6 +65,7 @@ internal sealed class KeepAliveService : Service
             .Build()!;
         if (OperatingSystem.IsAndroidVersionAtLeast(29)) StartForeground(NoteId, note, ForegroundService.TypeMediaPlayback);
         else StartForeground(NoteId, note);
-        return StartCommandResult.Sticky;
+        // 다시 띄우지 않는다 — 게임을 끝내 프로세스를 닫은 뒤에 알림만 살아나 「실행 중」으로 남으면 안 된다(Droid/Restart.cs).
+        return StartCommandResult.NotSticky;
     }
 }

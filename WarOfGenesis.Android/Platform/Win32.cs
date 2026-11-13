@@ -310,18 +310,37 @@ internal static class PlatformHost
     private static readonly ConcurrentQueue<Win32.Msg> Queue = new();
     private static readonly SemaphoreSlim Wake = new(0);
 
+    /// <summary>줄 자물쇠 — <see cref="Batch"/> 로 넣은 메시지 묶음은 게임이 한 틀에 다 받는다(반만 받고 갱신하지 않게).</summary>
+    private static readonly object Gate = new();
+
     public static void Post(uint message, nint wParam, nint lParam)
     {
-        var (x, y) = Cursor;
-        Queue.Enqueue(new Win32.Msg
+        lock (Gate)
         {
-            Hwnd = Win32.MainWindow, Message = message, WParam = wParam, LParam = lParam,
-            Time = (uint)Environment.TickCount, Pt = new Win32.Point { X = x, Y = y },
-        });
+            var (x, y) = Cursor;
+            Queue.Enqueue(new Win32.Msg
+            {
+                Hwnd = Win32.MainWindow, Message = message, WParam = wParam, LParam = lParam,
+                Time = (uint)Environment.TickCount, Pt = new Win32.Point { X = x, Y = y },
+            });
+        }
         if (Wake.CurrentCount == 0) Wake.Release();
     }
 
-    public static bool TryTake(out Win32.Msg msg) => Queue.TryDequeue(out msg);
+    public static bool TryTake(out Win32.Msg msg)
+    {
+        lock (Gate) return Queue.TryDequeue(out msg);
+    }
+
+    /// <summary>
+    /// 안에서 보내는 메시지를 한 묶음으로 넣는다 — 게임 스레드는 묶음을 다 넣은 뒤에야 첫 것을 꺼낸다.
+    /// 터치 탭(옮기기 → 누르기 → 떼기 → 화면 밖으로)이 둘로 갈려 그 사이에 한 틀이 돌면, 커서가 창 위쪽 탭(가장자리 띠)에 머문 그 틀에
+    /// 가장자리 스크롤이 맵을 16점 밀었다(사용자 보고 — 모드 창 위쪽 탭을 누르면 맵이 살짝씩 밀린다).
+    /// </summary>
+    public static void Batch(Action send)
+    {
+        lock (Gate) send();
+    }
 
     // ── 틀 맞추기 (60Hz) ──
     private static readonly Stopwatch Clock = Stopwatch.StartNew();

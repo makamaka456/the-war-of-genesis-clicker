@@ -22,7 +22,7 @@ namespace WarOfGenesis.Droid;
                          | ConfigChanges.Density | ConfigChanges.FontScale | ConfigChanges.Locale | ConfigChanges.LayoutDirection)]
 public class GameActivity : Activity
 {
-    private const int PickBackdropCode = 21, PickAgain = -100, TestEnding = -101;
+    private const int PickBackdropCode = 21, PickAgain = -100, TestEnding = -101, ShowTrace = -102;
 
     /// <summary>게임 스레드 — 원본 파트1 마지막 챕터와 같은 길(Part1ChapterScreen: Find → Cut.StartVideo(Prepare))로 엔딩 영상을 튼다.</summary>
     private static void PlayEndingTest()
@@ -35,6 +35,8 @@ public class GameActivity : Activity
     private GameView _view = null!;
     private Shortcuts _shortcuts = null!;
     private static Thread? _game;
+    /// <summary>게임 스레드가 오류로 끝났을 때 보인 글 — 앱에 다시 들어와도 같은 글을 보인다.</summary>
+    private static string? _failure;
 
     /// <summary>돌고 있는 원본 게임 창 — 단축 아이콘이 지금 화면(전투인가 따위)을 본다.</summary>
     internal static volatile GameWindow? Game;
@@ -57,11 +59,20 @@ public class GameActivity : Activity
         // 맨 아래에 「원본 폴더 다시 고르기」(런처로) — 런처는 원본을 골라 두면 건너뛰므로 다시 고를 길이 여기뿐이다.
         // 「파트1 엔딩 영상 시험」 — 기기 재생기가 MPEG-1 을 트는지 보려고 잠시 둔 줄(사용자 요청 2026-11-13, 확인 뒤 뺀다).
         AndroidHooks.ShowTools = items => RunOnUiThread(() => ShowTools([.. items, new AndroidHooks.ToolItem("원본 폴더 다시 고르기", PickAgain, []),
-                                                                         new AndroidHooks.ToolItem("파트1 엔딩 영상 시험", TestEnding, [])], "도구", null));
+                                                                         new AndroidHooks.ToolItem("파트1 엔딩 영상 시험", TestEnding, []),
+                                                                         new AndroidHooks.ToolItem("진단 기록 보기", ShowTrace, [])], "도구", null));
         AndroidHooks.ShowBackdrop = () => RunOnUiThread(ShowBackdropDialog);
         AndroidHooks.BackdropNameOf = () => Backdrop.Has ? "있음" : "없음";
         PadInput.Refresh();
         if (_game == null) StartGame();
+        else if (!_game.IsAlive)
+        {
+            // 게임이 이미 끝난 프로세스에 다시 들어왔다 — 예전에는 게임을 새로 켜지 않아 까만 화면에 멈췄다(사용자 보고 2026-11-13,
+            // 오프닝 영상을 켜고 게임을 끝낸 뒤 앱을 다시 켜니 아무리 눌러도 까만 화면). 새 프로세스로 다시 띄운다 —
+            // 오류로 끝났었으면(그 글은 이미 보였고 crash.log 에 남았다) 고르기 화면에 머물러 원본 폴더를 고칠 수 있게 한다.
+            RestartActivity.Run(this, setup: _failure != null);
+            return;
+        }
         KeepAliveService.Start(this);
         if (OperatingSystem.IsAndroidVersionAtLeast(33) && CheckSelfPermission(Android.Manifest.Permission.PostNotifications) != Permission.Granted)
             RequestPermissions([Android.Manifest.Permission.PostNotifications], 31);   // 알림줄 표시(③) — 거절해도 서비스는 돈다
@@ -85,6 +96,7 @@ public class GameActivity : Activity
     protected override void OnPause()
     {
         base.OnPause();
+        AndroidHooks.Trace("앱 뒤로");
         PadState.AppInFront = false;
         AndroidAudio.Pause(true);
         PlatformHost.Activate(false);
@@ -100,6 +112,7 @@ public class GameActivity : Activity
     protected override void OnResume()
     {
         base.OnResume();
+        AndroidHooks.Trace("앱 앞으로");
         HideBars();
         PadState.AppInFront = true;
         AndroidAudio.Pause(false);
@@ -130,18 +143,25 @@ public class GameActivity : Activity
                 if (!OriginalGameSetup.Ensure()) throw new DirectoryNotFoundException("원본 게임 폴더를 모릅니다 — 첫 화면에서 골라 주세요.");
                 CustomSprites.InstallExamples();
                 _view.Status = null;
+                AndroidHooks.Trace("게임 시작");
                 using (var window = new GameWindow())
                 {
                     Game = window;
                     window.Run();
                 }
                 Game = null;
-                RunOnUiThread(() => { KeepAliveService.Stop(this); FinishAffinity(); });
+                // 게임 안 「종료」 — 프로세스까지 닫는다. 남겨 두면 다음에 앱을 켤 때 끝난 게임에 붙어 까만 화면이었다(OnCreate).
+                RunOnUiThread(() =>
+                {
+                    KeepAliveService.Stop(this);
+                    FinishAffinity();
+                    Android.OS.Process.KillProcess(Android.OS.Process.MyPid());
+                });
             }
             catch (Exception ex)
             {
                 CrashLog.Write("게임 스레드", ex);
-                _view.Status = "게임을 시작하지 못했습니다 — 이 화면을 사진으로 찍어 보내 주세요.\n\n" + ex.GetType().Name + ": " + ex.Message + "\n\n" + ex.StackTrace;
+                _view.Status = _failure = "게임을 시작하지 못했습니다 — 이 화면을 사진으로 찍어 보내 주세요.\n\n" + ex.GetType().Name + ": " + ex.Message + "\n\n" + ex.StackTrace;
             }
         }, 16 * 1024 * 1024) { IsBackground = true, Name = "Game" };
         _game.Start();
@@ -199,9 +219,24 @@ public class GameActivity : Activity
             var item = items[e.Which];
             if (item.Children.Count > 0) ShowTools(item.Children, title + " › " + item.Text, () => ShowTools(items, title, back));
             else if (item.Command == TestEnding) PlatformHost.RunOnGame(PlayEndingTest);
-            else if (item.Command == PickAgain) StartActivity(new Intent(this, typeof(MainActivity)).PutExtra(MainActivity.ExtraSetup, true));
+            else if (item.Command == PickAgain) ConfirmPickAgain();
+            else if (item.Command == ShowTrace)
+                ShowImmersive(new AlertDialog.Builder(this).SetTitle("진단 기록 (사진으로 찍어 보내 주세요)")!.SetMessage(AndroidHooks.TraceText())!.SetPositiveButton("닫기", (_, _) => { })!.Create()!);
             else PlatformHost.Command(item.Command);
         });
+        ShowImmersive(b.Create()!);
+    }
+
+    /// <summary>
+    /// 「원본 폴더 다시 고르기」 — 돌던 게임을 끝내고 앱을 새로 띄워 고르기 화면으로 간다. 예전에는 게임을 둔 채 고르기 화면을 띄워,
+    /// 새로 고른 폴더가 지금 도는 게임에 안 먹었다(옛 원본 그대로).
+    /// </summary>
+    private void ConfirmPickAgain()
+    {
+        var b = new AlertDialog.Builder(this).SetTitle("원본 폴더 다시 고르기")!
+            .SetMessage("게임을 끝내고 첫 화면(폴더 고르기)으로 갑니다.\n저장하지 않은 진행은 사라집니다.")!
+            .SetPositiveButton("끝내고 가기", (_, _) => RestartActivity.Run(this, setup: true))!
+            .SetNegativeButton("취소", (_, _) => { })!;
         ShowImmersive(b.Create()!);
     }
 

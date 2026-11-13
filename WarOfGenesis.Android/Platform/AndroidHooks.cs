@@ -1,4 +1,4 @@
-// 원본 파일에 #if ANDROID 로 넣은 두 줄이 부르는 곳(사용자 요청 2026-11-12).
+// 원본 파일에 #if ANDROID 로 넣은 줄이 부르는 곳(사용자 요청 2026-11-12).
 //  · duel-dx/System/SystemMenu.cs — 「버그 리포트」 자리의 「도구」: PC 판 메뉴 막대의 「도구」 · 「개발」 묶음을 목록 창으로(「패치 내역」은 뺀다).
 //  · duel-dx/System/SettingsScreen.cs — 설정 > 화면 「배경 그림」: 검은 여백을 채울 그림 · 크기 · 투명도.
 // 창은 안드로이드 쪽(Droid/)이 띄운다. 시험기에서는 목록을 찍기만 한다.
@@ -49,6 +49,25 @@ internal static class AndroidHooks
             list.Add(item.Sub != null ? new ToolItem(text, 0, Build(item.Sub)) : new ToolItem(text, (int)item.Id, []));
         }
         return list;
+    }
+
+    // ── 진단 기록(잠시 — 폰에서만 생기는 일을 찾으려고. 원인을 찾으면 뺀다) ──
+    private static readonly Queue<string> TraceLines = new();
+    private static readonly System.Diagnostics.Stopwatch TraceClock = System.Diagnostics.Stopwatch.StartNew();
+
+    /// <summary>원본 GameWindow.TestRunTrace 가 부른다 — 최근 줄 몇 개를 시각(앱 켠 뒤 초)과 함께 둔다.</summary>
+    internal static void Trace(string line)
+    {
+        lock (TraceLines)
+        {
+            TraceLines.Enqueue($"{TraceClock.Elapsed.TotalSeconds,7:F2}s  {line}");
+            while (TraceLines.Count > 60) TraceLines.Dequeue();
+        }
+    }
+
+    internal static string TraceText()
+    {
+        lock (TraceLines) return TraceLines.Count == 0 ? "(기록 없음)" : string.Join("\n", TraceLines);
     }
 
     internal static string BackdropName() => BackdropNameOf?.Invoke() ?? "없음";

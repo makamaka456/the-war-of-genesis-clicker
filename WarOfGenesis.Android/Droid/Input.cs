@@ -48,8 +48,12 @@ internal sealed class TouchMouse(GameView view, float density)
                 {
                     if (_dragging || _multi) return;
                     _rightDone = true;
-                    PlatformHost.Mouse(Win32.WM_RBUTTONDOWN, cx, cy);
-                    PlatformHost.Mouse(Win32.WM_RBUTTONUP, cx, cy);
+                    PlatformHost.Batch(() =>
+                    {
+                        PlatformHost.Mouse(Win32.WM_RBUTTONDOWN, cx, cy);
+                        PlatformHost.Mouse(Win32.WM_RBUTTONUP, cx, cy);
+                        Park();   // 오른쪽 누름도 커서를 옮긴다 — 손을 떼기 전까지 가장자리 띠에 남지 않게
+                    });
                     view.PerformHapticFeedback(FeedbackConstants.LongPress);
                 });
                 view.PostDelayed(_longPress, LongPressMs);
@@ -93,27 +97,32 @@ internal sealed class TouchMouse(GameView view, float density)
             {
                 CancelLongPress();
                 var (cx, cy) = ToClient(e.GetX(), e.GetY());
-                if (_multi)
+                bool multi = _multi, wheeled = _wheeled, right = _rightDone, dragging = _dragging;
+                // 한 묶음으로 — 게임이 반만 받고 한 틀을 돌리면 그 틀에 가장자리 스크롤이 맵을 민다(PlatformHost.Batch)
+                PlatformHost.Batch(() =>
                 {
-                    if (!_wheeled) { PlatformHost.Mouse(Win32.WM_RBUTTONDOWN, cx, cy); PlatformHost.Mouse(Win32.WM_RBUTTONUP, cx, cy); }
-                }
-                else if (_rightDone) { }
-                else if (_dragging) PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
-                else
-                {
-                    PlatformHost.Mouse(Win32.WM_MOUSEMOVE, cx, cy);
-                    PlatformHost.Mouse(Win32.WM_LBUTTONDOWN, cx, cy);
-                    PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
-                }
+                    if (multi)
+                    {
+                        if (!wheeled) { PlatformHost.Mouse(Win32.WM_RBUTTONDOWN, cx, cy); PlatformHost.Mouse(Win32.WM_RBUTTONUP, cx, cy); }
+                    }
+                    else if (right) { }
+                    else if (dragging) PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
+                    else
+                    {
+                        PlatformHost.Mouse(Win32.WM_MOUSEMOVE, cx, cy);
+                        PlatformHost.Mouse(Win32.WM_LBUTTONDOWN, cx, cy);
+                        PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy);
+                    }
+                    Park();
+                });
                 _dragging = false;
-                Park();
                 return true;
             }
             case MotionEventActions.Cancel:
                 CancelLongPress();
-                if (_dragging) { var (cx, cy) = ToClient(e.GetX(), e.GetY()); PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy); }
+                if (_dragging) { var (cx, cy) = ToClient(e.GetX(), e.GetY()); PlatformHost.Batch(() => { PlatformHost.Mouse(Win32.WM_LBUTTONUP, cx, cy); Park(); }); }
+                else Park();
                 _dragging = false;
-                Park();
                 return true;
         }
         return true;
