@@ -68,15 +68,37 @@ internal static class MediaFoundationAudio
 }
 
 /// <summary>
-/// duel-dx/System/DirectShowVideo.cs 의 판 — 기술 컷신 영상(.wgm 등)을 튼다. 안드로이드 재생기는 아직이다:
-/// 열기를 실패로 알리면 원본 CutscenePlayer 가 컷신을 건너뛴다(원본의 실패 처리 길).
+/// duel-dx/System/DirectShowVideo.cs 의 판 — 파트1 엔딩 영상(MPEG · AVI)을 튼다. 원본은 DirectShow 가 그림을 넘기지만,
+/// 안드로이드는 기기 재생기(MediaPlayer)가 게임 화면 위에 바로 그린다(<see cref="Player"/>). 그래서 <see cref="CopyFrame"/> 은 늘 false 다.
+/// 기기가 그 꼴을 못 틀면 열기에서 COMException — 원본 CutscenePlayer 가 「엔딩 영상을 틀 수 없습니다」로 넘긴다. 시험기는 늘 못 튼다.
 /// </summary>
 internal sealed class DirectShowVideo : IDisposable
 {
-    public int Width { get; }
-    public int Height { get; }
-    public static DirectShowVideo Open(string path, float volume) => throw new COMException("안드로이드 판은 아직 이 영상을 틀지 못합니다");
-    public bool Finished => true;
+    /// <summary>재생기 하나 — 안드로이드 쪽(Droid/VideoOverlay)이 만든다.</summary>
+    internal interface IPlayer : IDisposable
+    {
+        int Width { get; }
+        int Height { get; }
+        bool Finished { get; }
+    }
+
+    /// <summary>(파일, 소리 크기 0~1) → 재생기. 못 틀면 예외(사유 글).</summary>
+    internal static Func<string, float, IPlayer>? Player;
+
+    private readonly IPlayer _player;
+    private DirectShowVideo(IPlayer player) { _player = player; }
+
+    public int Width => _player.Width;
+    public int Height => _player.Height;
+
+    public static DirectShowVideo Open(string path, float volume)
+    {
+        if (Player == null) throw new COMException("이 판은 영상 재생기가 없습니다");
+        try { return new DirectShowVideo(Player(path, volume)); }
+        catch (Exception ex) when (ex is not COMException) { throw new COMException("기기가 이 영상을 틀지 못합니다: " + ex.Message); }
+    }
+
+    public bool Finished => _player.Finished;
     public bool CopyFrame(uint[] frame) => false;
-    public void Dispose() { }
+    public void Dispose() => _player.Dispose();
 }

@@ -22,7 +22,16 @@ namespace WarOfGenesis.Droid;
                          | ConfigChanges.Density | ConfigChanges.FontScale | ConfigChanges.Locale | ConfigChanges.LayoutDirection)]
 public class GameActivity : Activity
 {
-    private const int PickBackdropCode = 21, PickAgain = -100;
+    private const int PickBackdropCode = 21, PickAgain = -100, TestEnding = -101;
+
+    /// <summary>게임 스레드 — 원본 파트1 마지막 챕터와 같은 길(Part1ChapterScreen: Find → Cut.StartVideo(Prepare))로 엔딩 영상을 튼다.</summary>
+    private static void PlayEndingTest()
+    {
+        if (Game is not { } g) return;
+        if (Part1EndingMovie.Find() is not { } file) { g.Toast("엔딩 영상 없음 — 파트1 폴더에서 Ending.pak · _sys2.cab 따위를 못 찾았습니다"); return; }
+        g.Toast("엔딩 영상 준비 중… (" + Path.GetFileName(file) + ")");
+        g.Cut.StartVideo(() => Part1EndingMovie.Prepare(file), played => g.Toast(played ? "엔딩 영상 끝 — 기기에서 틀 수 있습니다" : "엔딩 영상을 틀 수 없습니다 — 기기가 이 영상 꼴(MPEG-1)을 모릅니다"));
+    }
     private GameView _view = null!;
     private Shortcuts _shortcuts = null!;
     private static Thread? _game;
@@ -41,12 +50,15 @@ public class GameActivity : Activity
         root.AddView(_view);
         _shortcuts = new Shortcuts(this, root, _view);
         SetContentView(root);
+        DirectShowVideo.Player = (path, volume) => VideoOverlay.Open(this, root, path, volume);
         // 화면이 다시 만들어져도(게임은 그대로 돈다) 새 화면에 이어 붙인다
         PlatformHost.Presenter = _view.Present;
         PlatformHost.ScreenOn = on => RunOnUiThread(() => { if (on) Window!.AddFlags(WindowManagerFlags.KeepScreenOn); else Window!.ClearFlags(WindowManagerFlags.KeepScreenOn); });
         PlatformHost.Dialog = ShowDialogBlocking;
         // 맨 아래에 「원본 폴더 다시 고르기」(런처로) — 런처는 원본을 골라 두면 건너뛰므로 다시 고를 길이 여기뿐이다.
-        AndroidHooks.ShowTools = items => RunOnUiThread(() => ShowTools([.. items, new AndroidHooks.ToolItem("원본 폴더 다시 고르기", PickAgain, [])], "도구", null));
+        // 「파트1 엔딩 영상 시험」 — 기기 재생기가 MPEG-1 을 트는지 보려고 잠시 둔 줄(사용자 요청 2026-11-13, 확인 뒤 뺀다).
+        AndroidHooks.ShowTools = items => RunOnUiThread(() => ShowTools([.. items, new AndroidHooks.ToolItem("원본 폴더 다시 고르기", PickAgain, []),
+                                                                         new AndroidHooks.ToolItem("파트1 엔딩 영상 시험", TestEnding, [])], "도구", null));
         AndroidHooks.ShowBackdrop = () => RunOnUiThread(ShowBackdropDialog);
         AndroidHooks.BackdropNameOf = () => Backdrop.Has ? "있음" : "없음";
         PadInput.Refresh();
@@ -177,6 +189,7 @@ public class GameActivity : Activity
             if (e.Which >= items.Count) { back?.Invoke(); return; }
             var item = items[e.Which];
             if (item.Children.Count > 0) ShowTools(item.Children, title + " › " + item.Text, () => ShowTools(items, title, back));
+            else if (item.Command == TestEnding) PlatformHost.RunOnGame(PlayEndingTest);
             else if (item.Command == PickAgain) StartActivity(new Intent(this, typeof(MainActivity)).PutExtra(MainActivity.ExtraSetup, true));
             else PlatformHost.Command(item.Command);
         });

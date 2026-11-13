@@ -117,6 +117,14 @@ internal static class SimMain
                 }
                 case "nopad": PadState.Connected = false; break;
                 case "menus": DumpMenu(Win32.MenuBar, ""); break;
+                case "ending":
+                    PlatformHost.RunOnGame(() =>
+                    {
+                        var file = Part1EndingMovie.Find();
+                        Log($"엔딩 영상 찾기: {file ?? "없음"} · 모드 창 글: {string.Join(" / ", Part1EndingMovie.Status().Select(t => t.Text))}");
+                        if (file != null) GameWindow._active?.Cut.StartVideo(() => Part1EndingMovie.Prepare(file), played => Log($"엔딩 영상 틀기: {played}"));
+                    });
+                    break;
                 case "movie": { int n = I(1); PlatformHost.RunOnGame(() => Log($"영상 {n} 걸기: {GameWindow._active?.Cut.StartMovie(n)}")); break; }
                 case "audio": Log($"소리 장치로 나간 바이트: {PacedSink.BytesOut:N0}"); break;
                 case "files": foreach (var f in Directory.EnumerateFiles(Environment.GetEnvironmentVariable("DUELDX_SAVEDIR")!, p.Length > 1 ? p[1] : "*", SearchOption.TopDirectoryOnly)) Log("  " + Path.GetFileName(f) + " " + new FileInfo(f).Length); break;
