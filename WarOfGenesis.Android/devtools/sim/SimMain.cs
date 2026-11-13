@@ -117,6 +117,15 @@ internal static class SimMain
                 }
                 case "nopad": PadState.Connected = false; break;
                 case "menus": DumpMenu(Win32.MenuBar, ""); break;
+                case "bgm":   // 배경음악 푸는 시간 — 파트2 곡(Bink 소리) · 파트1 곡(20000+n, 시디 곡은 WAV)
+                    foreach (string arg in p.Skip(1))
+                    {
+                        int id = int.Parse(arg);
+                        var sw = Stopwatch.StartNew();
+                        PcmSound? pcm = id >= Part1Game.BgmBase ? Part1CdMusic.Music(id - Part1Game.BgmBase, m => Log("    " + m)) : BinkAudio.Open(VoicePack.BgmPath(id)).Decode();
+                        Log($"곡 {id}: {(pcm == null ? "없음" : $"{pcm.Samples.Length / Math.Max(1, pcm.Channels) / (double)pcm.SampleRate:F0}초 길이")} — 푸는 데 {sw.Elapsed.TotalSeconds:F2}초");
+                    }
+                    break;
                 case "ending":
                     PlatformHost.RunOnGame(() =>
                     {
