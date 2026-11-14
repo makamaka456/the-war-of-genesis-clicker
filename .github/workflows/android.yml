@@ -139,7 +139,7 @@ jobs:
           # 파이썬 zipfile 은 한글 이름에 UTF-8 깃발을 단다(윈도우 탐색기에서 zip 안의 이름이 안 깨진다)
           python3 -c 'import sys,zipfile,os; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); [z.write(os.path.join("tool",f),f) for f in sorted(os.listdir("tool"))]; z.close()' "$tool"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release delete-asset "$tag" "-.-.zip" --repo "$GITHUB_REPOSITORY" -y 2>/dev/null || true   # 한글이 지워진 옛 첨부
+            gh release delete-asset --repo "$GITHUB_REPOSITORY" -y -- "$tag" "-.-.zip" || true   # 한글이 지워진 옛 첨부
             gh release upload "$tag" "${{ steps.apk.outputs.path }}" "$tool#원본 게임 자료 추출기 (PC용).zip" --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file notes.md   # 설명도 지금 릴리즈 노트로
           else
