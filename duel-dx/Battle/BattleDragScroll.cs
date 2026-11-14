@@ -144,7 +144,7 @@ internal sealed class BattleDragScroll(GameWindow host)
         host.Part1TitleScr.ChapterOnTop && !AnyToolWindow() && host.Part1TitleScr.Chapter.DragScrollAllowed(bx, by);
 
     /// <summary>메뉴 막대에서 여는 창(맨 위에 그린다)이 떠 있나 — 그 위의 누름은 끌기가 아니다.</summary>
-    private bool AnyToolWindow() =>
+    internal bool AnyToolWindow() =>
         host.NotesScr.Open || host.ConsentScr.Open || host.SettingsScr._open || host.TimedEditScr._open || host.DevScr._open
         || host.StatsScr._open || host.SkillBookScr._open || host.Part1TablesOpen
         || host.ItemBookScr._open || host.CharEditScr._open || host.LegionEditScr._open || host.TuningScr._tuningOpen || host._keysOpen;

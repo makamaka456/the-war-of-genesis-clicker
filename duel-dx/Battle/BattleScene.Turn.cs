@@ -670,16 +670,34 @@ internal sealed unsafe partial class BattleScene(GameWindow host)
             if (Part1.Fighter(p1u) is { } gear)
             {
                 int hpUp = gear.Equipment.Sum(i => i?.Bonus(400) ?? 0), soulUp = gear.Equipment.Sum(i => i?.Bonus(401) ?? 0);
+                int hpBefore = p1u.Hp, soulBefore = p1u.Soul;
                 if (hpUp != 0 && p1u.Hp > 0) p1u.Hp = Math.Min(p1u.MaxHp, p1u.Hp + hpUp);
                 if (soulUp != 0) p1u.Soul = Math.Min(p1u.MaxSoul, p1u.Soul + soulUp);
+                // 모드 > 편의성 > 차례 회복 숫자 보이기 — 장비로 찬 HP · 소울을 그 유닛 위에 띄운다. 원본 0x10036433~0x10036493 은 값만 더하고
+                // 숫자를 안 띄운다(원본에 없음, 버그 리포트 #99, 기본 켬). HP 는 회복 숫자 그대로(옛 HP → 새 HP 로 세어 올라가는 노랑),
+                // 소울은 격려처럼 「SOUL +n」 이 떠오르되 하늘색으로 가르고, 둘 다 뜨면 HP 위에 둔다.
+                bool hpShown = false, soulShown = false;
+                if (host._turnRegenNumbers && p1u.OnField && host._db is { } regenDb)
+                {
+                    if (hpShown = p1u.Hp > hpBefore) ShowNumber(p1u, regenDb.T(159), HealColor2, rise: false, count: (hpBefore, p1u.Hp));
+                    if (soulShown = p1u.Soul > soulBefore) ShowNumber(p1u, $"{regenDb.T(41)} +{p1u.Soul - soulBefore}", SoulHealColor, dy: hpShown ? -18 : 0);
+                }
                 if (Trace && hpUp + soulUp != 0)
                     System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dueldx_trace.log"),
-                        $"part1 turn regen chr {p1u.ChrCode} hp +{hpUp} → {p1u.Hp}/{p1u.MaxHp} soul +{soulUp} → {p1u.Soul}" + Environment.NewLine);
+                        $"part1 turn regen chr {p1u.ChrCode} hp +{hpUp} → {p1u.Hp}/{p1u.MaxHp} soul +{soulUp} → {p1u.Soul} 숫자 hp {hpShown} soul {soulShown} at {host._lastTime:F2}" + Environment.NewLine);
             }
             // 파트1 부하는 대장 차례마다 이동 1 · 행동 1 을 받는다(0x10036825: +0x1c6 = +0x1c8 = 1) — 부하 TP 를 채우고 시작 칸을 적는다
             // (휴식의 1/5 · 1/10 가름). 부하는 제 차례가 없어 틱의 TP 채우기(차례 깃발이 안 선 사람만)를 못 받는다.
+            // 소울 +20 도 부하마다 따로 받는다 — 0x10034f50 이 제 몸에 0x10034f80 을 부른 뒤, 대장(+0x1be)이면 부하 사슬(+0x1d8 → +0x1e4)마다
+            // 같은 함수(블래스 +20 · 중독 120 · 컨디션이상 50 자르기)를 부른다. 장비 보정 401 은 차례 임자에게만(0x10036479). 전에는 부하 소울이 늘 그대로였다.
             foreach (var f in FollowersOf(index))
             {
+                f.Soul = Part1Combat.GaugeOnTurn(f.Soul, cap: f.MaxSoul);
+                if (Part1.Has(f, 15)) f.Soul = Part1Combat.GaugeOnTurn(f.Soul, cap: f.MaxSoul);
+                CapPart1Soul(f);
+                if (Trace)
+                    System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dueldx_trace.log"),
+                        $"part1 follower soul chr {f.ChrCode} (대장 {host._units[index].ChrCode}) → {f.Soul}" + Environment.NewLine);
                 f.Tp = f.MaxTp;
                 f.OriginCol = f.Col;
                 f.OriginRow = f.Row;
@@ -2680,7 +2698,8 @@ internal sealed unsafe partial class BattleScene(GameWindow host)
     /// 첫 타는 사용자가 원하는 대로 <b>0.05초</b>에 낸다. 타격 키가 없으면 한 번만.
     /// 다만 <b>원거리</b>(사거리 1칸 넘음)는 모션의 타격 키 그 틱에 낸다 — 총은 쏘는 컷에 타격 키가 있어서, 0.05초로 당기면
     /// 크리스티앙처럼 피해 숫자가 총을 쏘기 전에 떴다(사용자 보고).
-    /// 근접이어도 <b>멈춘 채 겨누다가 타격 키에서 베는</b> 모션(<see cref="HoldsUntilStrike"/>)은 그 키에 낸다.
+    /// 근접이어도 <b>멈춘 채 겨누다가 타격 키에서 베는</b> 모션(<see cref="HoldsUntilStrike"/>)과 <b>첫 타격 키가 늦은</b>
+    /// 모션(<see cref="LateStrikeTicks"/>)은 그 키에 낸다.
     /// </summary>
     internal List<double> HitTimesFor(UnitState u, int action, bool ranged = false)
     {
@@ -2688,9 +2707,16 @@ internal sealed unsafe partial class BattleScene(GameWindow host)
         if (!host._sprites.TryGetValue(u.ChrCode, out var sprite) || sprite.Clip(action, u.Facing) is not { Hits.Count: > 0 } clip)
             return [first];
         var starts = clip.Hits.Select(h => h.Start).OrderBy(t => t).ToList();
-        double at = ranged || HoldsUntilStrike(clip, starts[0]) ? Math.Max(first, starts[0] / TicksPerSecond) : first;
+        double at = ranged || starts[0] >= LateStrikeTicks || HoldsUntilStrike(clip, starts[0]) ? Math.Max(first, starts[0] / TicksPerSecond) : first;
         return [.. starts.Select(t => at + (t - starts[0]) / TicksPerSecond)];
     }
+
+    /// <summary>
+    /// 근접인데 첫 타격 키가 이 틱 이상이면 0.05초로 당기지 않고 그 키에 친다 — 보통 휘두르기는 9~15틱이라 그대로 당기고,
+    /// 샤크바리(그림 0202) 27틱처럼 컷을 3틱마다 바꾸며 길게 겨누는 모션은 피해 숫자가 휘두르기 0.85초 전에 떴다(버그 리포트 #104).
+    /// 같이 바뀌는 그림: 0117(36틱) · 0212(20) · 0350 · 0572(19).
+    /// </summary>
+    internal const int LateStrikeTicks = 18;
 
     /// <summary>근접 타격을 키에 맞추는 겨눔 길이(틱) — 보통 모션은 타격 키(대개 9틱)까지 3틱마다 컷이 바뀌며 휘두른다.</summary>
     internal const int WindUpHoldTicks = 12;
@@ -2913,13 +2939,16 @@ internal sealed unsafe partial class BattleScene(GameWindow host)
         // 칠하지만 +0x31 = 7 이면 7 을 넘겨(0x10038c13 · 0x10038c31) 설 수 있는 빈 칸(0x1008a950 → 0x10089bf0)만 칠해진다.
         // 누르기도 칠해진 칸만 받는다(0x100321e5 칸 깃발 &0xffc). 전에는 사거리 칸을 다 칠해 못 누르는 칸(적 옆 · 유닛 칸)도 붉었다.
         bool landOnly = Part1.AttackOf(w) is { AimFilter: 7 };
+        var edges = EdgeCells();   // 모드 > 가독성 향상 > 범위 테두리 — 사거리 집합의 바깥 가장자리(효과 범위는 안 넣는다)
         for (int row = 0; row < host.Rows; row++)
             for (int col = 0; col < host.Cols; col++)
             {
                 bool inRange = landOnly ? CanAimAt(w, u, col, row) : InWorkRange(w, u.Col, u.Row, col, row, u), inSplash = splash.Contains((col, row));
                 if (!inRange && !inSplash) continue;
                 PaintCell(col, row, inSplash ? SplashLayer : RangeLayer);
+                if (inRange && edges != null) edges[row * host.Cols + col] = 2;
             }
+        if (edges != null) DrawRangeEdges(edges, 2, 0, RangeEdge);
         // 저절로 겨눈 대상(적 커서나 칸)에도 깜빡이는 빨간 테두리
         if (aim is { } a)
         {

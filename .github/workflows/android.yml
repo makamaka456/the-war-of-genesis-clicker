@@ -1,0 +1,149 @@
+name: Android APK
+
+# 안드로이드판(WarOfGenesis.Android) APK 를 굽는다.
+#  - android-v* 태그를 밀면: APK 를 구워 그 태그 이름으로 Releases 에 올린다.
+#    PC 판 태그(v*, release.yml)와 이름이 달라 서로의 워크플로를 깨우지 않는다 — 안드로이드 태그는 꼭 android- 를 붙인다.
+#  - 안드로이드 쪽 파일이나 끌어 쓰는 PC 판 코드를 고쳐 브랜치에 밀거나 수동 실행하면: 굽기만 하고 Actions 아티팩트로 남긴다.
+#  원본 게임 자료는 APK 에 넣지 않는다(사용자가 폰의 WarOfGenesis 폴더에 넣는다 — docs/포팅-계획.md).
+on:
+  push:
+    tags:
+      - 'android-v*'
+    branches:
+      - '**'
+    paths:
+      - 'WarOfGenesis.Android/**'
+      - 'WarOfGenesis.Assets/**'
+      - 'duel-dx/**'
+      - 'assets/**'
+      - '.github/workflows/android.yml'
+      - '안드로이드용-자료-만들기.bat'
+  # 손으로 돌릴 때 release 에 android-vX.Y.Z 를 넣으면 그 이름으로 태그(지금 커밋)와 Releases 를 만든다 —
+  # 작업 환경이 태그를 밀 수 없을 때 쓰는 길(태그를 밀어도 같은 결과).
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '릴리즈 태그(android-vX.Y.Z). 비우면 굽기만 한다'
+        required: false
+        default: ''
+
+env:
+  # 다음에 낼 안드로이드판 번호 — 브랜치에서 구운 APK(아티팩트)도 이 번호로 낸다.
+  APP_VERSION: '0.1.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Android workload
+        run: dotnet workload install android
+
+      - name: Version
+        id: version
+        run: |
+          # 앱 버전 — 태그(android-vX.Y.Z)면 그 번호, 브랜치 빌드면 다음에 낼 판 번호(APP_VERSION)를 쓴다.
+          rel="${{ github.event.inputs.release }}"
+          if [[ -n "$rel" && ! "$rel" =~ ^android-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "release 는 android-vX.Y.Z 꼴이어야 합니다: $rel"; exit 1; fi
+          if [[ -n "$rel" ]]; then
+            v="${rel#android-v}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            v="${GITHUB_REF_NAME#android-v}"
+          else
+            v="${APP_VERSION}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "release=${rel:-$([[ "$GITHUB_REF_TYPE" == "tag" ]] && echo "$GITHUB_REF_NAME")}" >> "$GITHUB_OUTPUT"
+          echo "버전: $v (빌드 번호 $GITHUB_RUN_NUMBER)"
+
+      # 러너에 깔린 SDK 에 이 워크로드가 바라는 플랫폼/빌드 도구가 없으면 채운다.
+      - name: Install Android dependencies
+        run: >
+          dotnet build WarOfGenesis.Android/WarOfGenesis.Android.csproj
+          -t:InstallAndroidDependencies -f net10.0-android
+          -p:AndroidSdkDirectory="$ANDROID_HOME" -p:AcceptAndroidSDKLicenses=True
+
+      # 파트1 엔딩 영상 해독기(native/wogmpeg.c · pl_mpeg, MIT) — NDK clang 으로 ABI 마다 굽는다. APK 에는 libs/<abi>/libwogmpeg.so 로 실린다.
+      - name: Build MPEG decoder (NDK)
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          cd WarOfGenesis.Android
+          for pair in "arm64-v8a aarch64-linux-android24" "armeabi-v7a armv7a-linux-androideabi24" "x86_64 x86_64-linux-android24" "x86 i686-linux-android24"; do
+            set -- $pair
+            mkdir -p "libs/$1"
+            "$BIN/$2-clang" -O2 -shared -fPIC -Wl,-z,max-page-size=16384 -o "libs/$1/libwogmpeg.so" native/wogmpeg.c -lm
+          done
+          ls -l libs/*/
+
+      # 서명은 디버그 키다(러너가 그때그때 만든다) — 새 버전을 깔려면 옛 앱을 지우고 깔아야 할 수 있다.
+      - name: Publish APK
+        run: >
+          dotnet publish WarOfGenesis.Android/WarOfGenesis.Android.csproj
+          -c Release -f net10.0-android -o out
+          -p:AndroidSdkDirectory="$ANDROID_HOME"
+          -p:ApplicationDisplayVersion=${{ steps.version.outputs.version }}
+          -p:ApplicationVersion=${{ github.run_number }}
+
+      - name: Collect APK
+        id: apk
+        run: |
+          src=$(find out -name '*-Signed.apk' | head -n 1)
+          if [[ -z "$src" ]]; then echo "서명된 APK 가 없습니다"; find out; exit 1; fi
+          dst="WarOfGenesis-${{ steps.version.outputs.version }}.apk"
+          cp "$src" "$dst"
+          ls -l "$dst"
+          # 엔딩 영상 해독기가 실렸나
+          unzip -l "$dst" | grep libwogmpeg.so || { echo "APK 에 libwogmpeg.so 가 없습니다"; exit 1; }
+          # 페가수스 등록용 고정 액티비티 이름(am start -n 패키지/액티비티)이 실렸나 — SDK 의 aapt2 로 매니페스트를 읽는다
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -n 1)
+          "$aapt2" dump xmltree "$dst" --file AndroidManifest.xml > manifest.txt
+          grep -E 'package=|android:name\(0x01010003\)="[^"]*Activity' manifest.txt || true
+          grep -qF '"io.github.makamaka456.warofgenesis.MainActivity"' manifest.txt || { echo "고정 액티비티 이름이 없습니다"; exit 1; }
+          echo "path=$dst" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: WarOfGenesis-apk
+          path: ${{ steps.apk.outputs.path }}
+
+      - name: Upload to GitHub Releases
+        if: steps.version.outputs.release != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.version.outputs.release }}"
+          # 릴리즈 설명 — WarOfGenesis.Android/docs/안드로이드-릴리즈노트.md 의 「## <태그>」 대목(없으면 기본 글)
+          awk -v t="## $tag" '$0==t{on=1;next} on&&/^## /{exit} on' WarOfGenesis.Android/docs/안드로이드-릴리즈노트.md > notes.md
+          if [[ ! -s notes.md ]]; then echo "창세기전3 리메이크 안드로이드판 APK. 디버그 키로 서명했으므로 새 버전을 깔 때 옛 앱을 먼저 지워야 할 수 있습니다." > notes.md; fi
+          # PC 에서 폰에 넣을 자료 묶음을 만드는 도구(원본 게임 자료 추출기) — 실행기와 본체 두 파일만(저장소 전체를 받지 않아도 되게).
+          # 릴리즈 첨부 이름은 영어로 — GitHub 가 첨부 이름의 한글을 지운다(「-.-.zip」 이 됐다). 목록에 보이는 이름(#뒤)은 한글로 둔다.
+          tool="WarOfGenesis-Data-Maker.zip"
+          mkdir -p tool && cp 안드로이드용-자료-만들기.bat WarOfGenesis.Android/pc-script/make-data-zip.ps1 tool/
+          # 파이썬 zipfile 은 한글 이름에 UTF-8 깃발을 단다(윈도우 탐색기에서 zip 안의 이름이 안 깨진다)
+          python3 -c 'import sys,zipfile,os; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); [z.write(os.path.join("tool",f),f) for f in sorted(os.listdir("tool"))]; z.close()' "$tool"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete-asset --repo "$GITHUB_REPOSITORY" -y -- "$tag" "-.-.zip" || true   # 한글이 지워진 옛 첨부
+            gh release upload "$tag" "${{ steps.apk.outputs.path }}" "$tool#원본 게임 자료 추출기 (PC용).zip" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file notes.md   # 설명도 지금 릴리즈 노트로
+          else
+            gh release create "$tag" "${{ steps.apk.outputs.path }}" "$tool#원본 게임 자료 추출기 (PC용).zip" --repo "$GITHUB_REPOSITORY" \
+              --title "안드로이드 $tag" --target "$GITHUB_SHA" \
+              --notes-file notes.md
+          fi

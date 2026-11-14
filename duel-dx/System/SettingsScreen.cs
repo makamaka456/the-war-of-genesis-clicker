@@ -83,11 +83,16 @@ internal sealed unsafe class SettingsScreen(GameWindow host)
                     new("글자 크기", host._fontScalePercent == 100 ? "100% (기본)" : $"{host._fontScalePercent}%",
                         Step: d => host.OnMenuCommand(MenuFontScale + Math.Clamp(font + d, 0, FontScaleChoices.Length - 1)),
                         NoPrev: font == 0, NoNext: font >= FontScaleChoices.Length - 1),
+#if !ANDROID   // 안드로이드는 늘 화면을 채운다 — 그 자리에 아래 「배경 그림」
                     new("전체화면", "", Toggle: () => host.OnMenuCommand(MenuFullscreen), On: host._fullscreen, Note: "모니터를 가득 채운다 (F11)"),
+#endif
                     new("격자 보이기", "", Toggle: () => host.OnMenuCommand(MenuGrid), On: host._showGrid),
                     new("상단 상태 줄 보이기", "", Toggle: () => host.OnMenuCommand(MenuStatusBar), On: host._showStatusBar),
                     new("장면 번호 보이기", "", Toggle: () => host.OnMenuCommand(MenuSceneTag), On: host._showSceneTag, Note: "왼쪽 아래 Fld · Btl · Chp 번호"),
                     new("화면 비율 초기화", "", Press: () => host.OnMenuCommand(MenuResetView), Note: "해상도 · 배율을 처음 값으로"),
+#if ANDROID   // 안드로이드: 화면 양옆 · 위아래 검은 여백을 채울 그림(사용자 요청 2026-11-12, WarOfGenesis.Android/Platform/AndroidHooks.cs)
+                    new("배경 그림", AndroidHooks.BackdropName(), Press: () => AndroidHooks.OpenBackdrop(host), Note: "검은 여백을 채울 그림 · 크기 · 투명도"),
+#endif
                 ];
             }
             case 1:

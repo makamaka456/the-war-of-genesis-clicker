@@ -54,14 +54,26 @@ internal sealed unsafe class Part1TitleScreen(GameWindow host)
         ("NEW GAME", 0, Cx - 49, Cy + 101, Cx + 46, Cy + 116),
         ("LOAD GAME", 1, Cx - 51, Cy + 124, Cx + 48, Cy + 139),
         ("CONTINUE", 2, Cx - 46, Cy + 147, Cx + 46, Cy + 162),   // 원본에 없는 줄 — LOAD GAME 아래(사용자 요청). 튜토리얼 · EXIT 는 한 줄씩 내린다
+#if ANDROID   // 안드로이드: 파트2 타이틀의 「PART 1 (BETA)」 단추와 같은 크기 · 네모 테두리로 오른쪽 아래(사용자 요청 2026-11-13) — 버그 리포트 자리
+        ("PART 2", -1, 500, 440, 624, 466),
+#else
         ("PART 2", -1, 530, 450, 630, 468),
+#endif
         ("EXIT", 4, Cx - 15, Cy + 193, Cx + 16, Cy + 207),
         ("TUTORIAL", 3, Cx - 33, Cy + 170, Cx + 31, Cy + 185),   // 원본 단추 2 — CONTINUE 아래, EXIT 위
-        ("버그 리포트", -1, 530, 428, 630, 446),                    // 원본에 없는 줄(사용자 요청 menu-118) — PART 2 위. 글 쓰는 창을 띄운다(BugReport)
+#if ANDROID   // 안드로이드: 버그 리포트 단추 없음(크기 0 — 누를 수 없고 그리지 않는다)
+        ("버그 리포트", -1, 0, 0, 0, 0),
+#else
+        ("버그 리포트", -1, 530, 428, 630, 446),
+#endif                    // 원본에 없는 줄(사용자 요청 menu-118) — PART 2 위. 글 쓰는 창을 띄운다(BugReport)
     ];
 
     /// <summary>위·아래 키로 옮기는 차례 — 가운데 메뉴 줄 먼저, 그다음 오른쪽 아래 PART 2.</summary>
+#if ANDROID
+    private static readonly int[] KeyOrder = [0, 1, 2, 5, 4, 3];
+#else
     private static readonly int[] KeyOrder = [0, 1, 2, 5, 4, 3, 6];
+#endif
 
     /// <summary>글 단추 크기 — 연대표 · 마을 · 일행 창이 <see cref="DrawButton"/> 과 함께 쓴다.</summary>
     internal const int ButtonW = 140, ButtonH = 24;
@@ -694,6 +706,14 @@ internal sealed unsafe class Part1TitleScreen(GameWindow host)
             for (int i = 0; i < Buttons.Length; i++)
                 if (Buttons[i] is { Row: < 0 } b)
                 {
+#if ANDROID   // PART 2 는 파트2 타이틀의 「PART 1 (BETA)」처럼 네모 단추로, 버그 리포트는 그리지 않는다
+                    if (i == ButtonBug) continue;
+                    if (i == ButtonPart2)
+                    {
+                        DrawButton(ox + b.X0, oy + b.Y0, b.X1 - b.X0, b.Y1 - b.Y0, OriginalGameSetup.Part1Only ? "PART 2 연결" : b.Name, _hover == i);
+                        continue;
+                    }
+#endif
                     uint color = _hover == i ? 0xFFFFF0C8u : 0xFFA89C90u;
                     string name = i == ButtonPart2 && OriginalGameSetup.Part1Only ? "PART 2 연결" : b.Name;
                     var (_, w, h) = host.UiGetText(name, color, 12);

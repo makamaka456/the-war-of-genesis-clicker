@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      원본 게임 자료(파트1 · 파트2 폴더, 수 GB)는 APK 에 넣지 않는다. 사용자가 내장 저장소의 WarOfGenesis 폴더에 넣고,
+      앱은 그 자리를 그대로 읽는다 — 안드로이드 11 부터는 「모든 파일 접근」(MANAGE_EXTERNAL_STORAGE), 그 앞은 읽기 · 쓰기 권한이다.
+    -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- 게임이 도는 동안 알림줄에 「실행 중」(포그라운드 서비스 · 미디어 재생 종류) — 뒤로 내렸을 때 안드로이드가 앱을 덜 닫는다(Droid/KeepAlive.cs). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application android:allowBackup="false"
+                 android:icon="@mipmap/appicon"
+                 android:label="창세기전3"
+                 android:requestLegacyExternalStorage="true"
+                 android:supportsRtl="true" />
+</manifest>

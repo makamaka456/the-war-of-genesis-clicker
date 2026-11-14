@@ -1,0 +1,88 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      창세기전3 리메이크 안드로이드판. TheWarOfGenesis.sln 에는 넣지 않는다 — 안드로이드 워크로드가 없는
+      Windows PC 의 sln 빌드가 깨지기 때문이다. 따로 빌드한다:
+        dotnet publish WarOfGenesis.Android/WarOfGenesis.Android.csproj -c Release -f net10.0-android
+      원본(PC 판) 코드는 고치지 않고 아래에서 <Compile Include Link> 로 끌어 쓴다(docs/포팅-계획.md).
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0-android</TargetFramework>
+        <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+        <OutputType>Exe</OutputType>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <!-- 'WarOfGenesis.Android' 로 하면 안에서 Android.* 이름을 가린다. -->
+        <RootNamespace>WarOfGenesis.Droid</RootNamespace>
+        <AssemblyName>WarOfGenesis</AssemblyName>
+        <ApplicationId>io.github.makamaka456.warofgenesis</ApplicationId>
+        <ApplicationTitle>창세기전3</ApplicationTitle>
+        <!-- CI 에서 -p:ApplicationVersion=실행번호 -p:ApplicationDisplayVersion=태그 로 덮는다. -->
+        <ApplicationVersion>1</ApplicationVersion>
+        <ApplicationDisplayVersion>0.1.1</ApplicationDisplayVersion>
+        <!-- 타이틀 오른쪽 위 「Ver …」(GameWindow.AppVersion) — 안드로이드 판 번호를 보인다. -->
+        <InformationalVersion>$(ApplicationDisplayVersion)-android</InformationalVersion>
+        <!-- 릴리즈에 바로 올려 설치할 수 있게 aab 가 아니라 apk 로 낸다. 서명은 디버그 키다. -->
+        <AndroidPackageFormat>apk</AndroidPackageFormat>
+        <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+        <TrimMode>partial</TrimMode>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- 파트1 엔딩 영상 해독기 — CI 가 NDK 로 libs/<abi>/libwogmpeg.so 를 굽는다(native/README.md) -->
+        <AndroidNativeLibrary Include="libs\**\libwogmpeg.so" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- ② 평소에도 힙이 커지면 일찍 정리 — Mono GC 설정(Droid/KeepAlive.cs) -->
+        <AndroidEnvironment Include="Environment.txt" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- PC 판(UseWindowsForms)은 System.Drawing 을 전역으로 쓴다 — 원본 파일이 using 없이 Bitmap 을 쓰는 곳이 있다. -->
+        <Using Include="System.Drawing" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- devtools/ · pc-script/ · docs/ 는 개발 도구 · PC 용 스크립트 · 문서라 APK 에 넣지 않는다 -->
+        <Compile Remove="devtools\**;pc-script\**;docs\**" />
+        <None Remove="devtools\**;pc-script\**;docs\**" />
+    </ItemGroup>
+
+    <!--
+      PC 판 자료 읽기 · 전투 · 대본(WarOfGenesis.Assets, net10.0 — 윈도우에 안 묶임)을 통째로 끌어 쓴다.
+      AudioMixer.cs 의 winmm 호출은 #if !ANDROID 로 가리고 Platform/AudioMixer.Android.cs 가 같은 이름으로 채운다. WaveOutPlayer.cs 는 편집기만 쓴다.
+    -->
+    <ItemGroup>
+        <Compile Include="..\WarOfGenesis.Assets\*.cs" Exclude="..\WarOfGenesis.Assets\WaveOutPlayer.cs" Link="Shared\WarOfGenesis.Assets\%(Filename)%(Extension)" />
+    </ItemGroup>
+
+    <!--
+      PC 판 게임 본체(duel-dx)를 통째로 끌어 쓴다. 아래 Exclude 는 윈도우 전용이라 안드로이드 대용품(Platform/)으로 갈아 끼운 것과 뺀 기능이다.
+        Win32.cs                         → Platform/Win32.cs (메시지 줄 · 메뉴 · 키 상태)
+        Program.cs                       → MainActivity / GameActivity (시작)
+        System/OriginalGameSetup.cs      → Platform/Replaced.cs (원본 자리는 고르기 화면이 정한다)
+        System/MediaFoundationAudio.cs · System/DirectShowVideo.cs · System/PlatformInfo.cs → Platform/Replaced.cs
+        Updater.cs · EditorLauncher.cs · System/BugReport.cs · System/MyBugReportsDialog.cs · Moses/HiResBackdrop.cs
+                                         → 뺀 기능(자동 업데이트 · 편집기 · 버그 리포트 · 고해상도 배경 AI) — Platform/Removed.cs 가 같은 이름으로 막는다
+      Vortice(D3D11) · System.Drawing · WinForms 는 Platform/ 의 작은 대용품이 받는다.
+    -->
+    <ItemGroup>
+        <Compile Include="..\duel-dx\**\*.cs"
+                 Exclude="..\duel-dx\obj\**;..\duel-dx\bin\**;..\duel-dx\Win32.cs;..\duel-dx\Program.cs;..\duel-dx\Updater.cs;..\duel-dx\EditorLauncher.cs;..\duel-dx\System\BugReport.cs;..\duel-dx\System\MyBugReportsDialog.cs;..\duel-dx\Moses\HiResBackdrop.cs;..\duel-dx\System\OriginalGameSetup.cs;..\duel-dx\System\MediaFoundationAudio.cs;..\duel-dx\System\DirectShowVideo.cs;..\duel-dx\System\PlatformInfo.cs"
+                 Link="Shared\duel-dx\%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+
+    <!--
+      PC 판이 exe 옆에 싣는 우리 파일(duel-dx/WarOfGenesis.csproj 의 Content 와 같은 목록) — APK 의 shipped/ 에 싣고
+      처음 켤 때 실행 파일 자리(AppContext.BaseDirectory)로 꺼낸다(Droid/GameActivity.cs ShippedFiles). 원본 게임 자료는 싣지 않는다.
+      stats-url.txt 는 싣지 않는다 — 통계 전송은 뺀 기능.
+    -->
+    <ItemGroup>
+        <AndroidAsset Include="..\assets\**\*.json;..\assets\originals.txt;..\assets\patches.txt;..\assets\icons\*;..\assets\custom-sprites\**\*.obs;..\assets\custom-sprites\**\*.png"
+                      Link="Assets\shipped\assets\%(RecursiveDir)%(Filename)%(Extension)" />
+        <AndroidAsset Include="..\릴리즈노트.md;..\contributor.md" Link="Assets\shipped\%(Filename)%(Extension)" />
+    </ItemGroup>
+
+</Project>
