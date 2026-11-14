@@ -110,6 +110,8 @@ jobs:
           ls -l "$dst"
           # 엔딩 영상 해독기가 실렸나
           unzip -l "$dst" | grep libwogmpeg.so || { echo "APK 에 libwogmpeg.so 가 없습니다"; exit 1; }
+          # 페가수스 등록용 고정 액티비티 이름(am start -n 패키지/액티비티)이 실렸나 — 매니페스트는 UTF-16 글이다
+          unzip -p "$dst" AndroidManifest.xml | strings -e l | grep -x "io.github.makamaka456.warofgenesis.MainActivity" || { echo "고정 액티비티 이름이 없습니다"; exit 1; }
           echo "path=$dst" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact

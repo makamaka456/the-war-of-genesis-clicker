@@ -15,7 +15,7 @@ using Color = Android.Graphics.Color;
 
 namespace WarOfGenesis.Droid;
 
-[Activity(Label = "창세기전3", Theme = "@android:style/Theme.Material.NoActionBar.Fullscreen",
+[Activity(Name = "io.github.makamaka456.warofgenesis.GameActivity", Label = "창세기전3", Theme = "@android:style/Theme.Material.NoActionBar.Fullscreen",
     ScreenOrientation = ScreenOrientation.SensorLandscape, LaunchMode = LaunchMode.SingleTask,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard
                          | ConfigChanges.Navigation | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize | ConfigChanges.UiMode

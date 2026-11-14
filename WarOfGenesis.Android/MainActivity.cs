@@ -14,7 +14,9 @@ namespace WarOfGenesis.Droid;
 /// 고른 폴더 안을 <b>파일로</b> 살펴 파트2 · 파트1 원본과 게임 자료 폴더를 찾는다 — 폴더 이름은 보지 않는다(GameSetup.UseRoot).
 /// 이미 골라 두었으면 곧장 게임으로 간다(게임 안 시스템 메뉴 > 도구 > 「원본 폴더 고르기」로 돌아온다).
 /// </summary>
-[Activity(Label = "창세기전3", MainLauncher = true, Theme = "@android:style/Theme.Material.NoActionBar.Fullscreen",
+// 이름을 고정한다 — 빌드 도구는 「crc64…」 해시 이름을 붙이는데, 페가수스 같은 프런트엔드에 「am start -n 패키지/액티비티」로 등록하려면
+// 읽을 수 있고 판마다 안 바뀌는 이름이 필요하다(사용자 요청 2026-11-14, docs/인계-노트.md 「페가수스」).
+[Activity(Name = "io.github.makamaka456.warofgenesis.MainActivity", Label = "창세기전3", MainLauncher = true, Exported = true, Theme = "@android:style/Theme.Material.NoActionBar.Fullscreen",
     ScreenOrientation = ScreenOrientation.SensorLandscape,
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard | ConfigChanges.Navigation)]
 public class MainActivity : Activity
