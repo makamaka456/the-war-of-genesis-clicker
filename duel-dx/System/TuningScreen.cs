@@ -76,11 +76,12 @@ internal sealed unsafe class TuningScreen(GameWindow host)
         return (bx, by + TalkVoiceRowDy, bw, bh);
     }
 
-    /// <summary>탭 — 0 일반(전투 규칙) · 1 밸런스(어빌리티 개편, 사용자 요청 menu-64) · 2 스토리(대사 진행) · 3 편의성 · 4 실험. 제목줄 바로 아래 한 줄(사용자 요청).</summary>
+    /// <summary>탭 — 0 일반(전투 규칙) · 1 밸런스(어빌리티 개편, 사용자 요청 menu-64) · 2 스토리(대사 진행) · 3 편의성 · 4 실험 · 5 엔딩 영상 · 6 가독성 향상. 제목줄 바로 아래 한 줄(사용자 요청).</summary>
     internal int _tuningTab = int.TryParse(Environment.GetEnvironmentVariable("DUELDX_TUNING"), out int startTab) ? Math.Clamp(startTab, 0, TabNames.Length - 1) : 0;
-    internal const int TabY = 30, TabH = 24, TabW = 92;
-    internal static readonly string[] TabNames = ["일반", "밸런스", "스토리", "편의성", "실험", "엔딩 영상"];
-    internal const int TabGeneral = 0, TabBalance = 1, TabStory = 2, TabComfort = 3, TabLab = 4, TabMovie = 5;
+    // 탭 너비 80 — 일곱째 탭(가독성 향상)이 늘어 92 로는 창(600) 오른쪽을 넘었다(끝 탭 오른쪽 12 + 6 × 84 + 80 = 596).
+    internal const int TabY = 30, TabH = 24, TabW = 80;
+    internal static readonly string[] TabNames = ["일반", "밸런스", "스토리", "편의성", "실험", "엔딩 영상", "가독성 향상"];
+    internal const int TabGeneral = 0, TabBalance = 1, TabStory = 2, TabComfort = 3, TabLab = 4, TabMovie = 5, TabReadable = 6;
 
     /// <summary>스토리 탭 — 「대사 사이 멈춤」 고르기 단추들의 자리(창 기준).</summary>
     internal const int PauseY = 100, PauseW = 90, PauseH = 26, PauseGap = 4, StoryCheckY = 150;
@@ -214,7 +215,7 @@ internal sealed unsafe class TuningScreen(GameWindow host)
     /// </summary>
     internal List<string> EnabledMods()
     {
-        var on = new[] { TabGeneral, TabBalance, TabStory, TabComfort, TabLab, TabMovie }.SelectMany(TuningChecks)
+        var on = new[] { TabGeneral, TabBalance, TabStory, TabComfort, TabLab, TabMovie, TabReadable }.SelectMany(TuningChecks)
             .Where(c => c.On && c.Command is not (MenuSendStats or MenuMosesWarpMovie)).Select(c => c.Label).ToList();
         if (!host._mosesWarpMovie) on.Add("모세스 워프 영상 끔");   // 기본 켬(원본대로) — 끈 것이 원본과 다르다
         if (_soulWeight != 100) on.Add($"일반 공격 소울 기여도 {SoulWeightLabel(_soulWeight)}");
@@ -235,6 +236,14 @@ internal sealed unsafe class TuningScreen(GameWindow host)
         ("파트2 오프닝 영상", CutscenePlayer.FindOriginal(TitleScreen.OpeningMovie) != null ? "게임을 켤 때 타이틀 앞에 원본 오프닝(원본 폴더에서 바로 튼다)" : "원본 폴더에 Mov 0008 이 없어 나오지 않는다", MenuOpeningMovie, host._openingMovie),
         // 모세스 워프 영상 — 원본은 항성계를 옮길 때마다 떠나는 · 오는 영상을 튼다(버그 리포트 #70). 기본 켬, 끄면 영상 없이 넘어간다.
         ("모세스 워프 영상", CutscenePlayer.FindOriginal(MosesScene.WarpLeaveMovies[0]) != null ? "항성계를 옮길 때 원본의 워프 영상을 튼다" : "원본 폴더에 워프 영상(Mov 0016~0031)이 없다", MenuMosesWarpMovie, host._mosesWarpMovie),
+    ] : tab == TabReadable ?
+    [
+        // 가독성 향상 탭 — 흰 눈밭 판(파트1 Btl 20031 빙원 따위)에서 범위 칸 · 얼음 덩이가 잘 안 보인다는 요청. 셋 다 원본에 없다 — 범위 테두리만 기본 끔(어색하다는 말에 물들이기로 바꿈).
+        ("밝은 칸 범위 진하게", "흰 바탕에 묻히는 범위 칸을 물들인다(원본에 없음)", MenuBrightCellFill, host._brightCellFill),
+        ("범위 테두리", "이동 · 공격 범위 바깥에 선을 두른다(원본에 없음)", MenuRangeEdges, host._rangeEdges),
+        ("얼음 · 땅불 칸 표시", "파트1 얼음 덩이 · 땅불 칸을 물들인다(원본에 없음)", MenuPart1FieldMarks, host._part1FieldMarks),
+        // 온도 표시 — 빙원 판에서 캐릭터가 얼어붙는데 기온 · 몸 온도가 안 보인다는 요청. 원본에 없고 기본 켬.
+        ("온도 표시", "파트1 기온 · 몸 온도 · 깎인 SPD(원본에 없음)", MenuTemperatureDisplay, host._temperatureDisplay),
     ] : tab == TabLab ?
     [
         // 실험 탭 — 아직 다듬는 중인 것. 기본은 모두 끔.
@@ -255,6 +264,7 @@ internal sealed unsafe class TuningScreen(GameWindow host)
         ("전직할 때 EXP 없애기", "원본처럼 전직하면 쌓인 EXP 를 지운다 · 끄면 남긴다", MenuKeepJobExp, host._dropJobExp),
         ("대사 중 우클릭으로 건너뛰기", "끄면 우클릭이 장면을 넘기지 않는다 · Esc 는 그대로", MenuRightClickSkipsTalk, host._rightClickSkipsTalk),
         ("파트1 대사는 눌러서 넘기기", "켜면 저절로 넘어가지 않고 누를 때까지 기다린다", MenuPart1TalkWaits, host._part1TalkWaits),
+        ("파트2 대사는 눌러서 넘기기", "켜면 저절로 넘어가지 않고 누를 때까지 기다린다", MenuTalkWaits, host._talkWaits),
         ("대사 첫 클릭은 글 채우기", "끄면 원본처럼 첫 클릭에 바로 넘어간다", MenuTalkClickFills, host._talkClickFills),
         ("익명 전투 통계 보내기", "쓴 어빌리티 · 피해 · 조작 방식 — 이름·세이브는 안 보낸다", MenuSendStats, host._sendStats),
     ] : tab == TabBalance ?
@@ -271,7 +281,7 @@ internal sealed unsafe class TuningScreen(GameWindow host)
         ("안 움직이는 먼 적은 안 비춤", "화면 밖 적은 걷거나 기술을 쓸 때만 카메라가 간다", MenuQuietFoeCamera, host._quietFoeCamera),
         ("파트1 차례 목소리", "파트1 인물 차례에 성우 한 마디(원본에 없음)", MenuPart1TurnVoice, host._part1TurnVoice),
         ("파트1 차례 테두리", "차례인 유닛에 주황·노랑 반짝이는 테두리", MenuPart1TurnOutline, host._part1TurnOutline),
-        ("가려진 캐릭터 반투명", "파트1 기둥·벽 뒤에 선 유닛을 반투명으로 비춘다", MenuCoverGhost, host._coverGhost),
+        ("가려진 캐릭터 반투명", "기둥·벽 뒤에 선 유닛을 반투명으로 비춘다", MenuCoverGhost, host._coverGhost),
         ("튜토리얼에서도 저장", "파트1 튜토리얼 전투에서도 SAVE(원본은 막는다)", MenuPart1TutorialSave, host._part1TutorialSave),
         ("무작위 상자는 시작 때", "파트1 무작위 상자를 전투 시작에 정함(끄면 열 때)", MenuPart1ChestRoll, host._part1ChestRollAtStart),
     ];

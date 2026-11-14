@@ -535,10 +535,10 @@ internal sealed class Part1MapObjects(GameWindow host)
     /// <summary>공격 서술 가운데 물체가 보는 둘 — +8 세기 · +3 속성(1 화염 · 2 빙한).</summary>
     internal readonly record struct Hit(int Power, int Element);
 
-    private const int MinHeat = -60, MaxHeat = 200, IgniteHeat = 160;
+    internal const int MinHeat = -60, MaxHeat = 200, IgniteHeat = 160;
 
     /// <summary>기온 — 머리 낱말 6(+0xb96e, 로더 <c>0x1002cbe5</c>). 물체 · 유닛 온도가 이쪽으로 간다. 이벤트 행동 102 가 바꾼다(<see cref="SetAmbient"/>).</summary>
-    private int Ambient => _ambient ?? host._scene.Part1Ambient;
+    internal int Ambient => _ambient ?? host._scene.Part1Ambient;
 
     private int? _ambient;
 
@@ -916,14 +916,23 @@ internal sealed class Part1MapObjects(GameWindow host)
     /// <summary>그 칸에 얼음 덩이가 있나(<c>0x1008fcc0</c> — 프로즌 아이스 115~123 의 것).</summary>
     internal bool IceAt(int col, int row) => _lingering.Any(l => l is { Notice: 11, Out: false } && l.Col == col && l.Row == row);
 
+    /// <summary>
+    /// 얼음 · 땅불 칸을 물들이는 층색 — 하늘색 · 주황(모드 &gt; 가독성 향상 &gt; 얼음 · 땅불 칸 표시, 원본에 없음).
+    /// 범위 칸처럼 칸밝기를 곱해 더하고, 가산이 포화하는 흰 눈밭에서는 곱하기로 넘어간다(<see cref="BattleScene.PaintCell(int, int, uint, bool)"/>).
+    /// </summary>
+    private const uint IceMarkLayer = 0x64D2FF, FireMarkLayer = 0xFF8C28;
+
     /// <summary>얼음 덩이를 그린다 — 물체와 함께, 유닛보다 먼저(덩이는 칸 바닥 높이, 유닛은 그 위 +19 라 원본 깊이로도 유닛이 앞이다).</summary>
     private void DrawLingering()
     {
         Retire();
         double now = host._lastTime;
+        bool marks = host._part1FieldMarks;
         foreach (var l in _lingering)
         {
             int tick = (int)((now - l.DrawFrom) * TicksPerSecond);
+            // 모드 > 가독성 향상 > 얼음 · 땅불 칸 표시(원본에 없음) — 칸 바닥을 하늘색 · 주황으로 물들이고 덩이 · 불을 얹는다(흰 눈밭에서 흰 덩이가 묻혔다).
+            if (marks && l is { Notice: 10 or 11, Out: false }) host.Btl.PaintCell(l.Col, l.Row, l.Notice == 11 ? IceMarkLayer : FireMarkLayer, mark: true);
             switch (l.Notice)
             {
                 case 11: DrawCellObs(118, l.Motion + 3, tick, l.Col, l.Row, loop: true); break;
@@ -1357,9 +1366,25 @@ internal sealed class Part1MapObjects(GameWindow host)
         if (ReferenceEquals(_mapDepthFor, host._scene)) return _mapDepth;
         _mapDepthFor = host._scene;
         var file = host._scene.MapFile;
-        _mapDepth = file.StartsWith(DemoScene.Part1MapPrefix, StringComparison.Ordinal) && int.TryParse(file[DemoScene.Part1MapPrefix.Length..], out int id)
-            ? Part1Map.LoadDepth(id, keyBaseBlack: host._scene.MapDecor.Count > 0) : null;
+        if (file.StartsWith(DemoScene.Part1MapPrefix, StringComparison.Ordinal))
+            _mapDepth = int.TryParse(file[DemoScene.Part1MapPrefix.Length..], out int id) ? Part1Map.LoadDepth(id, keyBaseBlack: host._scene.MapDecor.Count > 0) : null;
+        else
+        {
+            // 파트2 는 덧그림 띠만(ObtMap.ParseDepth) — 바탕은 유닛을 가리지 않는다. 버그 리포트 #102-3(벽 뒤 캐릭터가 벽 위로 올라온다).
+            try { _mapDepth = ObtMap.ParseDepth(File.ReadAllBytes(AssetPack.MapPath(file))); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _mapDepth = null; }
+        }
         return _mapDepth;
+    }
+
+    /// <summary>
+    /// 파트2 판의 한 틀을 시작한다 — 파트2 에는 맵 물체 층이 없어 <see cref="Draw"/> 를 안 부르므로 모아 둔 것만 비운다.
+    /// 이 객체는 파트2 에서 맵 덧그림의 가림 · 반투명(<see cref="QueueMapCover"/> · <see cref="GhostFrame"/> · <see cref="UnitBegin"/>)만 맡는다.
+    /// </summary>
+    internal void BeginCoverOnly()
+    {
+        _pending.Clear();
+        _drawn = 0;
     }
 
     /// <summary>
