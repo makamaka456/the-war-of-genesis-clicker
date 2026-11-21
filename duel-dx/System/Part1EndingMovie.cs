@@ -26,7 +26,11 @@ internal static class Part1EndingMovie
     {
         if (TestPath is { } test) return test == "none" || !File.Exists(test) ? null : test;
         if (Part1Game.Root is not { } root) return null;
-        string[] names = ["_sys2.cab", "_sys2.mpg", "_sys2.mpeg", "_sys2.avi", "_sys2.dat", "ending.mpg", "ending.mpeg", "ending.avi", "ending.dat"];
+        string[] names = ["_sys2.cab", "_sys2.mpg", "_sys2.mpeg", "_sys2.avi", "_sys2.dat", "ending.mpg", "ending.mpeg", "ending.avi", "ending.dat"
+#if ANDROID   // 안드로이드: 파트1 v1.04 설치본은 엔딩 영상을 게임 폴더의 Ending.pak(속은 MPEG 그대로)으로 둔다(사용자 결정 2026-11-13)
+            , "Ending.pak", "ending.pak", "ENDING.PAK"
+#endif
+        ];
         foreach (string folder in new[] { Path.Combine(root, "Setup"), root })
             foreach (string name in names)
             {

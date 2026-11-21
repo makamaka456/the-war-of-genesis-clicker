@@ -83,11 +83,16 @@ internal sealed unsafe class SettingsScreen(GameWindow host)
                     new("글자 크기", host._fontScalePercent == 100 ? "100% (기본)" : $"{host._fontScalePercent}%",
                         Step: d => host.OnMenuCommand(MenuFontScale + Math.Clamp(font + d, 0, FontScaleChoices.Length - 1)),
                         NoPrev: font == 0, NoNext: font >= FontScaleChoices.Length - 1),
+#if !ANDROID   // 안드로이드는 늘 화면을 채운다 — 그 자리에 아래 「배경 그림」
                     new("전체화면", "", Toggle: () => host.OnMenuCommand(MenuFullscreen), On: host._fullscreen, Note: "모니터를 가득 채운다 (F11)"),
+#endif
                     new("격자 보이기", "", Toggle: () => host.OnMenuCommand(MenuGrid), On: host._showGrid),
                     new("상단 상태 줄 보이기", "", Toggle: () => host.OnMenuCommand(MenuStatusBar), On: host._showStatusBar),
                     new("장면 번호 보이기", "", Toggle: () => host.OnMenuCommand(MenuSceneTag), On: host._showSceneTag, Note: "왼쪽 아래 Fld · Btl · Chp 번호"),
                     new("화면 비율 초기화", "", Press: () => host.OnMenuCommand(MenuResetView), Note: "해상도 · 배율을 처음 값으로"),
+#if ANDROID   // 안드로이드: 화면 양옆 · 위아래 검은 여백을 채울 그림(사용자 요청 2026-11-12, WarOfGenesis.Android/Platform/AndroidHooks.cs)
+                    new("배경 그림", AndroidHooks.BackdropName(), Press: () => AndroidHooks.OpenBackdrop(host), Note: "검은 여백을 채울 그림 · 크기 · 투명도"),
+#endif
                 ];
             }
             case 1:
@@ -117,6 +122,29 @@ internal sealed unsafe class SettingsScreen(GameWindow host)
         }
     }
 
+    /// <summary>값 칸 아래에 붙는 설명 글의 자리(줄 윗변에서) · 글 크기.</summary>
+    private const int NoteDy = 25;
+    private const float NoteSize = 10f;
+
+    /// <summary>
+    /// 줄마다 윗변 y — 줄 높이는 <see cref="RowH"/> 가 바탕이고, 고르기 줄 아래에 설명 글이 붙으면 그 글 높이를 재어 그만큼 다음 줄을 내린다.
+    /// 전에는 줄 간격을 34 로 박아 두어 「난이도」 설명(적 HP · 적 피해 · AI 강화)이 다음 줄 「게임 속도」 칸에 겹쳤다 — 글자 크기 · 배율이 크면 더 심했다(버그 리포트 #107).
+    /// 누르는 칸(<see cref="OnClick"/>) · 그리기(<see cref="Draw"/>) · 패드 초점(GamePad.Focus)이 같은 값을 쓴다.
+    /// </summary>
+    internal int[] RowTops(Row[] rows, int top)
+    {
+        var tops = new int[rows.Length];
+        int y = top;
+        for (int i = 0; i < rows.Length; i++)
+        {
+            tops[i] = y;
+            int h = RowH;
+            if (rows[i].Step != null && rows[i].Note.Length > 0) h = Math.Max(RowH, NoteDy + Measure(rows[i].Note, DimGray, NoteSize).H + 6);
+            y += h;
+        }
+        return tops;
+    }
+
     internal (int X, int Y) Origin() => (host._camX + (host.ViewWidth - W) / 2, host._camY + (host.ViewHeight - H) / 2);
 
     private bool In(int bx, int by, int x, int y, int w, int h) => bx >= x && bx < x + w && by >= y && by < y + h;
@@ -141,9 +169,10 @@ internal sealed unsafe class SettingsScreen(GameWindow host)
             return true;
         }
         var rows = Rows();
+        var tops = RowTops(rows, top);
         for (int i = 0; i < rows.Length; i++)
         {
-            int ry = top + i * RowH;
+            int ry = tops[i];
             var row = rows[i];
             if (row.Step != null)
             {
@@ -209,9 +238,10 @@ internal sealed unsafe class SettingsScreen(GameWindow host)
         else
         {
             var rows = Rows();
+            var tops = RowTops(rows, top);
             for (int i = 0; i < rows.Length; i++)
             {
-                int ry = top + i * RowH;
+                int ry = tops[i];
                 var row = rows[i];
                 if (row.Step != null)
                 {
@@ -224,7 +254,7 @@ internal sealed unsafe class SettingsScreen(GameWindow host)
                     // 꺼진 화살표는 어둡게 덮는다.
                     if (row.NoPrev) Fill(px + 170, ry, 24, 24, 0xB0101828);
                     if (row.NoNext) Fill(px + 378, ry, 24, 24, 0xB0101828);
-                    if (row.Note.Length > 0) Text(row.Note, px + 170, ry + 25, DimGray, 10);
+                    if (row.Note.Length > 0) Text(row.Note, px + 170, ry + NoteDy, DimGray, NoteSize);
                 }
                 else if (row.Toggle != null)
                 {

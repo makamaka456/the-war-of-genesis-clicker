@@ -13,8 +13,10 @@ namespace DuelDx;
 /// </remarks>
 internal sealed partial class GamePad
 {
+#if !ANDROID   // 안드로이드: WarOfGenesis.Android/Platform/GamePad.Android.cs
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref Win32.Point point);
+#endif
 
     /// <summary>방향을 누르고 있을 때 처음 기다리는 시간과 그 뒤 되풀이 간격(초).</summary>
     private const double SnapDelay = 0.35, SnapEvery = 0.12;
@@ -117,9 +119,10 @@ internal sealed partial class GamePad
                 return list;
             }
             var rows = settings.Rows();
+            var tops = settings.RowTops(rows, top);
             for (int i = 0; i < rows.Length; i++)
             {
-                int ry = top + i * SettingsScreen.RowH;
+                int ry = tops[i];
                 if (rows[i].Step != null) { list.Add((px + 170, ry, 24, 24)); list.Add((px + 170 + 24 + 184, ry, 24, 24)); }
                 else if (rows[i].Toggle != null) list.Add((px, ry, 200, 24));
                 else if (rows[i].Press != null) list.Add((px, ry, 200, 26));
@@ -198,8 +201,10 @@ internal sealed partial class GamePad
         {
             var (ox, oy) = host.Mos.MosesOrigin();
             foreach (var (x, y, _) in TitleScreen.TitleButtons) list.Add((ox + x, oy + y, TitleScreen.TitleButtonW, TitleScreen.TitleButtonH));
+#if !ANDROID   // 안드로이드: 버그 리포트 단추 없음
             var (bx, by, bw, bh) = TitleScreen.BugButton;   // 오른쪽 아래 「버그 리포트」
             list.Add((ox + bx, oy + by, bw, bh));
+#endif
             return list;
         }
         if (host.Mos._mosesOpen) MosesTargets(list);

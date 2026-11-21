@@ -11,7 +11,7 @@ namespace WarOfGenesis.Assets;
 /// 효과음은 표본율이 달라도 되고(22050 모노 등), 이웃 두 표본 사이를 선형으로 이어 늘린다(감사4 S8 — 원본은 DirectSound 가 늘린다.
 /// 전에는 가장 가까운 표본이라 22 kHz 효과음에 고역 잡음이 섞였다). 뒤쪽 실 하나가 40ms 버퍼를 몇 개씩 밀어 넣는다.
 /// </remarks>
-public sealed class AudioMixer : IDisposable
+public sealed partial class AudioMixer : IDisposable
 {
     private const int Rate = 44100, BufferFrames = Rate / 25, QueuedBuffers = 2;   // 줄 선 버퍼 2개(80ms) — 3개일 때 효과음이 80~130ms 늦었다(ba-21 sound D2)
     private const uint WhdrDone = 1;
@@ -44,12 +44,14 @@ public sealed class AudioMixer : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct WaveHdr { public IntPtr Data; public uint Length, Recorded; public IntPtr User; public uint Flags, Loops; public IntPtr Next, Reserved; }
 
+#if !ANDROID   // 안드로이드: 같은 이름의 대용 함수는 WarOfGenesis.Android/Platform/AudioMixer.Android.cs
     [DllImport("winmm.dll")] private static extern int waveOutOpen(out IntPtr hwo, uint device, ref WaveFormatEx fmt, IntPtr cb, IntPtr inst, uint flags);
     [DllImport("winmm.dll")] private static extern int waveOutClose(IntPtr hwo);
     [DllImport("winmm.dll")] private static extern int waveOutReset(IntPtr hwo);
     [DllImport("winmm.dll")] private static extern int waveOutPrepareHeader(IntPtr hwo, IntPtr hdr, uint size);
     [DllImport("winmm.dll")] private static extern int waveOutUnprepareHeader(IntPtr hwo, IntPtr hdr, uint size);
     [DllImport("winmm.dll")] private static extern int waveOutWrite(IntPtr hwo, IntPtr hdr, uint size);
+#endif
 
     private static readonly uint HdrSize = (uint)Marshal.SizeOf<WaveHdr>();
 

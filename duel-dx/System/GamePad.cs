@@ -31,6 +31,7 @@ internal sealed partial class GamePad(GameWindow host)
         public short LX, LY, RX, RY;
     }
 
+#if !ANDROID   // 안드로이드: 같은 이름의 대용 함수는 WarOfGenesis.Android/Platform/GamePad.Android.cs
     [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
     private static extern uint GetState14(uint index, out State state);
 
@@ -45,6 +46,7 @@ internal sealed partial class GamePad(GameWindow host)
 
     [DllImport("user32.dll")]
     private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+#endif
 
     private const int StickDeadZone = 16000, TriggerOn = 100;
 

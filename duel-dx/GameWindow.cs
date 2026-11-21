@@ -684,11 +684,14 @@ internal sealed unsafe partial class GameWindow : IDisposable
         // 같은 때 소리 장치도 한 번 다시 열렸다). 성우 대사는 저절로 넘어가 마우스 · 키보드를 안 만지고 몇 분씩 볼 수 있고, 게임 패드 입력은
         // Windows 유휴 타이머를 되돌리지 않는다 — 그동안 화면 끄기 시간이 차면 모니터가 꺼지고(HDMI 소리 장치도 함께 빠진다) 게임은 뒤에서 계속 돈다(가설).
         Win32.SetThreadExecutionState(Win32.ES_CONTINUOUS | Win32.ES_DISPLAY_REQUIRED | Win32.ES_SYSTEM_REQUIRED);
+        // 멈춤 감시 — 주 루프가 15초 넘게 안 돌면 그때 하던 일을 오류 기록에 적는다(버그 리포트 #100, HangWatchdog).
+        HangWatchdog.Start(this);
 
         while (_running)
         {
             // 줄에 자리가 나면 그때 입력을 받아 그린다 — 미리 그려 둔 프레임 뒤에 입력이 밀리지 않게.
             Win32.WaitForSingleObjectEx(_frameWait, 100, true);
+            HangWatchdog.Beat(HangWatchdog.Stage.Messages);
             while (Win32.PeekMessageW(out var msg, IntPtr.Zero, 0, 0, Win32.PM_REMOVE))
             {
                 if (msg.Message == Win32.WM_QUIT) { _running = false; break; }
@@ -708,6 +711,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
             // 기술 컷신이 도는 동안은 게임 시계를 세운다 — 영상이 끝나면 멈춘 자리에서 이어 간다(CutscenePlayer).
             if (Cut.Playing)
             {
+                HangWatchdog.Beat(HangWatchdog.Stage.Cutscene);
                 Cut.Update(real);
                 UpdateCursor();
                 Render();
@@ -717,6 +721,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
             for (int step = 0; step < TestRunSteps && _running; step++)
             {
                 double now = _lastTime + dt;
+                HangWatchdog.Beat(HangWatchdog.Stage.Update);
                 Update(dt);
                 _lastTime = now;
                 TestRunTick();
@@ -725,6 +730,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
             for (int step = 0; step < 240 && _skippingAction && _running; step++)
             {
                 double tickDt = 1.0 / TicksPerSecond, now = _lastTime + tickDt;
+                HangWatchdog.Beat(HangWatchdog.Stage.SkipEnemyAction);
                 Update(tickDt);
                 _lastTime = now;
                 StepSkipEnemyAction();
@@ -732,6 +738,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
 
             Cut.PrefetchForBattle();   // 컷신 기술을 가진 인물이 있으면 영상을 미리 받아 둔다
             UpdateCursor();
+            HangWatchdog.Beat(HangWatchdog.Stage.Render);
             Render();
         }
         Win32.SetThreadExecutionState(Win32.ES_CONTINUOUS);   // 화면 끄기 막음을 푼다
@@ -866,6 +873,10 @@ internal sealed unsafe partial class GameWindow : IDisposable
             case Win32.WM_KEYUP:
                 Btl._heldMoveKeys.Remove((int)wParam);
                 return IntPtr.Zero;
+            // 단축키 설정 창은 메뉴 막대 창들과 같이 맨 위에 그리므로 휠도 먼저 받는다 — 전에는 파트1 연대표 · 모드 창이 먼저 먹었다(버그 리포트 #107).
+            case Win32.WM_MOUSEWHEEL when _keysOpen:
+                ScrollKeys(-(short)(((long)wParam >> 16) & 0xFFFF) / 120);   // 단축키 목록을 굴린다
+                return IntPtr.Zero;
             // 모드 창 탭 내용을 굴린다(menu-131) — 모드 창은 클릭도 뒤 화면보다 먼저 받는다. 그 위에 그리는 도구 창이 떠 있으면 그쪽이 받는다.
             case Win32.WM_MOUSEWHEEL when TuningScr._tuningOpen && !NotesScr.Open && !SettingsScr._open && !StatsScr._open && !SkillBookScr._open
                                           && !ItemBookScr._open && !LegionEditScr._open && !CharEditScr._open && _partyTable is not { _open: true }:
@@ -876,9 +887,6 @@ internal sealed unsafe partial class GameWindow : IDisposable
                 return IntPtr.Zero;
             case Win32.WM_MOUSEWHEEL when EpisodesScr._episodesOpen:
                 EpisodesScr.ScrollEpisodes(-(short)(((long)wParam >> 16) & 0xFFFF) / 120);   // 연대표를 굴린다
-                return IntPtr.Zero;
-            case Win32.WM_MOUSEWHEEL when _keysOpen:
-                ScrollKeys(-(short)(((long)wParam >> 16) & 0xFFFF) / 120);   // 단축키 목록을 굴린다
                 return IntPtr.Zero;
             case Win32.WM_MOUSEWHEEL when ProgressScr._progressOpen:
                 ProgressScr._progressScroll -= 3 * (short)(((long)wParam >> 16) & 0xFFFF) / 120;   // 진행 상태 창이 떠 있으면 그 목록을 굴린다
@@ -1204,6 +1212,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
         if (NotesScr.OnClick(bx, by)) return;          // 릴리즈 노트(업데이트 뒤 처음 켰을 때)
         if (ConsentScr.OnClick(bx, by)) return;        // 「익명 통계를 보내도 될까요?」(처음 한 번)
         if (SettingsScr.OnClick(bx, by)) return;       // 설정 창
+        if (OnKeysClick(bx, by)) return;               // 단축키 설정 창(설정 > 키보드) — 전에는 타이틀 · 모세스 · 필드가 먼저 클릭을 먹었다(버그 리포트 #107)
         if (TimedEditScr.OnClick(bx, by)) return;      // 개발 > 타이밍 어택 수정 창
         if (DevScr.OnClick(bx, by)) return;            // 개발 창
         if (StatsScr.OnClick(bx, by)) return;          // 도구 > 전투 통계
@@ -1237,7 +1246,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
         if (ChaptersScr.OnChaptersClick(bx, by)) return;
         if (Mos.OnMosesClick(bx, by)) return;
         // 위에 그려지는 창이 먼저 받는다 — 전에는 아이템 목록이 시스템 메뉴·Status 보다 먼저 클릭을 먹었다(ba-20 G2).
-        if (OnKeysClick(bx, by) || Sys.OnSystemClick(bx, by) || StatusScr.OnStatusClick(bx, by)) return;
+        if (Sys.OnSystemClick(bx, by) || StatusScr.OnStatusClick(bx, by)) return;
         if (Btl.OnItemMenuClick(bx, by)) return;
         if (Btl.OnRingClick(bx, by) || Btl.OnAbilityMenuClick(bx, by)) return;
 
@@ -1358,6 +1367,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
         // 틱·AI·이벤트·걷기가 멈춘다. 전에는 뒤에서 계속 돌아 AI 차례·행동 도중이 저장됐다(감사5 S1).
         if (Sys.SystemOpen) { UpdateSounds(); if (_afterFadeOut != null) StepSceneFadeClock(); return; }
 
+        HangWatchdog.Mark("인물 움직임");
         foreach (var unit in _units) unit.Advance(dt * TicksPerSecond, dt);
 
         // 키를 누르고 있으면 한 칸이 끝난 그 프레임에 바로 다음 칸을 건다 — 멈칫하지 않고 걷기 컷도 이어진다.
@@ -1370,6 +1380,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
             Btl._aimRepeatAt = _realTime + AimRepeatEvery;
 
         // 정해 둔 길이 있으면 한 칸씩 이어 걷는다(클릭 이동·공격 자리로 가기·적 AI).
+        HangWatchdog.Mark("걷기");
         Btl.StepBlinks();
         LegionStageAb.StepLegionFades();
         UnitFxAb.StepUnitFx();
@@ -1389,15 +1400,19 @@ internal sealed unsafe partial class GameWindow : IDisposable
 
         foreach (var unit in _units) unit.SettleIfStopped();
         Btl.ResolvePendingTouch();                  // 상자 옆까지 걸어간 인물이 멈췄으면 연다
+        HangWatchdog.Mark("부하 따라오기");
         Btl.SyncFollowers();
         StepSceneFade();                        // 새 판이면 시작 카메라·페이드인, 끝났으면 페이드아웃 뒤 다음 장면
         if (Mos._mosesOpen || FieldOpen || TitleScr._titleOpen || EpisodesScr._episodesOpen) return;   // 페이드아웃이 장면을 넘겼다
+        HangWatchdog.Mark("카메라");
         Btl.UpdateCamera(dt);
         Btl.ApplyPoseHook();
         if (_fadeInStart < 0) Btl.ApplyWorkHook();
         StatusScr.SyncVirtualStatus();
         UpdateSounds();
+        HangWatchdog.Mark("링");
         Btl.UpdateRing();
+        HangWatchdog.Mark("대사");
         Tlk.UpdateTalk();
         // 페이드인 동안은 틱·이벤트가 멈춘다(원본은 페이드를 다 한 뒤에 루프로 들어간다, 0x10061ad0).
         if (_fadeInStart >= 0) return;
@@ -1407,9 +1422,13 @@ internal sealed unsafe partial class GameWindow : IDisposable
             if (BattleScene.AutoPlay) Part1TitleScr.Chapter.PressPick(0);
             return;
         }
+        HangWatchdog.Mark("사건");
         Btl.StepEvent();
+        HangWatchdog.Mark("차례 처리");
         Btl.UpdateTurn();
+        HangWatchdog.Mark("이동 범위");
         Btl.RefreshMoveRange();
+        HangWatchdog.Mark("결과 배너");
         UpdateOutcomeBanner();                  // 배너는 음악이 끝나고(최소 121틱) 저절로 넘어간다(0x1006afa0)
     }
 
@@ -1567,7 +1586,6 @@ internal sealed unsafe partial class GameWindow : IDisposable
         Btl.DrawUnitInfo();
         if (!Mos._mosesOpen) Sys.DrawSystem();
         Btl.DrawDeployPanel();
-        DrawKeysPanel();
         Btl.DrawLevelUp();
         PerfMark("창");
         double perfA = PerfLog ? _perf.Elapsed.TotalMilliseconds : 0;
@@ -1595,6 +1613,7 @@ internal sealed unsafe partial class GameWindow : IDisposable
         _jobTree?.Draw();
         _partyTable?.Draw();
         SettingsScr.Draw();
+        DrawKeysPanel();                       // 설정 > 키보드의 단축키 설정 창 — 전에는 전투 판 차례에 그려 타이틀 · 모세스 · 필드 그림에 묻혔다(버그 리포트 #107)
         DevScr.Draw();
         TimedEditScr.Draw();
         ConsentScr.Draw();

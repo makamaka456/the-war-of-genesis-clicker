@@ -42,7 +42,11 @@ internal sealed unsafe partial class SystemMenu(GameWindow host)
         (SystemItem.Party, -3, "동료 정보"),     // 원본에 없는 줄(menu-106) — 파트1 일행 한눈에(P 와 같다)
         (SystemItem.Mods, -1, "MODE"),          // 원본에 없는 줄(사용자 요청 menu-34) — 모드 창을 연다. 글자 그림은 다른 줄에서 따와 만든다(DrawModeLabel)
         (SystemItem.Settings, -2, "SETTING"),   // 원본에 없는 줄(사용자 요청 menu-41) — 설정 창을 연다. 전체화면에서는 메뉴 막대가 없어 여기가 설정으로 가는 길이다
+#if ANDROID   // 안드로이드: 버그 리포트는 뺀 기능 — 그 자리에 PC 판 메뉴 막대의 「도구」 · 「개발」을 묶은 목록(WarOfGenesis.Android/Platform/AndroidHooks.cs)
+        (SystemItem.BugReport, -3, "도구"),
+#else
         (SystemItem.BugReport, -3, "버그 리포트"), // 원본에 없는 줄(사용자 요청 menu-118) — 글 쓰는 창을 띄워 보낸다(BugReport). 지금 자리(전투 · 필드 · 챕터)가 같이 간다
+#endif
         (SystemItem.Exit, 4, "EXIT GAME"),
     ];
 
@@ -134,7 +138,11 @@ internal sealed unsafe partial class SystemMenu(GameWindow host)
                 break;
             case SystemItem.BugReport:
                 _systemMenuReturn = false;
+#if ANDROID
+                AndroidHooks.OpenTools(host);
+#else
                 host.Bugs.Open();
+#endif
                 break;
             case SystemItem.JobTree:
             case SystemItem.Party:
@@ -396,10 +404,17 @@ internal sealed unsafe partial class SystemMenu(GameWindow host)
 
     /// <summary>버그 리포트 아이콘 — 벌레 한 마리(더듬이 · 몸통 · 다리).</summary>
     private static readonly string[] BugIcon =
+#if ANDROID   // 「도구」 줄 — 렌치 꼴
+    [
+        "........###..", ".......#...#.", "..........##.", ".......#..##.", "......#####..", ".....###.....", "....###......",
+        "...###.......", "..###........", ".###.........", "###..........", "##...........", ".............",
+    ];
+#else
     [
         "..#.......#..", "...#.....#...", "....#####....", "...#######...", "#..#######..#", ".#.#######.#.", "...#######...",
         "##.#######.##", "...#######...", ".#.#######.#.", "#...#####...#", ".....###.....", ".............",
     ];
+#endif
 
     private uint[]? _treeIcon, _partyIcon, _bugIcon;
 
@@ -611,7 +626,7 @@ internal sealed unsafe partial class SystemMenu(GameWindow host)
     internal int _restartMoney;
 
     /// <summary>파트1 판에 들어올 때의 가방 · eld — RESTART 가 되돌린다(불러온 판은 기준이 없어 안 되돌린다).</summary>
-    internal (List<int> Bag, int Eld, (Dictionary<int, Part1Progress.Growth> Grown, List<(int Chr, int Level)> Picks) Growth)? _restartPart1;
+    internal (List<int> Bag, int Eld, Part1Progress.GrowthShot Growth)? _restartPart1;
 
     /// <summary>
     /// 전투에 들어올 때의 명부(Chr → 인물)·군단 배속·가진 군단 — RESTART 가 되돌린다. 전투 세이브에도 실려서 불러온 뒤 RESTART 도
@@ -670,9 +685,10 @@ internal sealed unsafe partial class SystemMenu(GameWindow host)
         {
             host.Part1.Bag = [.. part1.Bag];
             host.Part1.Eld = part1.Eld;
-            host.Part1.RestoreGrowth(part1.Growth);
+            var reequipped = host.Part1.RestoreGrowth(part1.Growth);   // 장비도(버그 리포트 #106)
             host._db?.ForgetPart1Characters();
             host.Btl.Part1.Forget();
+            foreach (int code in reequipped) host.Btl.RefreshPart1Abilities(code);   // 장비가 연 어빌리티 · 능력치도 전투 전으로
         }
         // 명부·군단도 전투 전으로 — 이것이 없으면 불러온 뒤 RESTART 가 그 전투에서 얻은 EXP·레벨·상자 아이템을 들고 다시 시작했다(감사5 S5).
         if (_entryRoster != null)

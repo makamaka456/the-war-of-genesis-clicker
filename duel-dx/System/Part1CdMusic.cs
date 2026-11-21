@@ -42,6 +42,14 @@ internal static class Part1CdMusic
                 log?.Invoke($"music 파트1 곡 {n} → 자산 WAV {Path.GetFileName(songAsset)} {fetched.Duration.TotalSeconds:0.0}초");
                 return fetched;
             }
+#if ANDROID   // 안드로이드: 파트1 v1.04 는 BGMs 12곡이 mp3 다 — 받아 둔 WAV 도 없는 곡(15 · 29)은 기기 해독기(MediaCodec)로 푼다(사용자 결정 2026-11-13)
+            if (Part1Game.Root is { } p1Root && Path.Combine(p1Root, "BGMs", $"{n:D4}.bgm") is var bgmPath && File.Exists(bgmPath)
+                && MediaFoundationAudio.Decode(bgmPath) is { } decoded)
+            {
+                log?.Invoke($"music 파트1 곡 {n} → BGMs\\{n:D4}.bgm 을 기기 해독기로 {decoded.Duration.TotalSeconds:0.0}초");
+                return decoded;
+            }
+#endif
             log?.Invoke($"music 파트1 곡 {n} → BGMs\\{n:D4}.bgm 없음 · 자산 없음 (무음)");
             return null;
         }

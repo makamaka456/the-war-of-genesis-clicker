@@ -44,6 +44,9 @@ internal sealed unsafe class TitleScreen(GameWindow host)
 
     internal bool BugButtonAt(int bx, int by)
     {
+#if ANDROID   // 안드로이드: 버그 리포트는 뺀 기능 — 타이틀의 단추도 없앤다(사용자 결정 2026-11-13)
+        return false;
+#endif
         var (ox, oy) = host.Mos.MosesOrigin();
         var (x, y, w, h) = BugButton;
         return bx >= ox + x && bx < ox + x + w && by >= oy + y && by < oy + y + h;
@@ -379,8 +382,10 @@ internal sealed unsafe class TitleScreen(GameWindow host)
         if (AssetPack.Status is { Length: > 0 } pack) host.UiText(pack, ox + 8, oy + 10, White, 12);
 
         host.Part1TitleScr.DrawEntry();   // 파트1 로 가는 단추(리메이크에만 있다)
+#if !ANDROID   // 안드로이드: 버그 리포트 단추 없음
         var (bugX, bugY, bugW, bugH) = BugButton;
         host.Part1TitleScr.DrawButton(ox + bugX, oy + bugY, bugW, bugH, "버그 리포트", _bugHover);
+#endif
         DrawFanNotice(270, 250);   // 배경의 원본 저작권 글(x 270, y 232~246) 바로 밑
         host.Sys.DrawSystem();     // CONTINUE 가 연 슬롯 창
         host.DrawToast();

@@ -51,12 +51,14 @@ internal sealed class Part1MapObjects(GameWindow host)
 
     private readonly List<Obj?> _objects = [];
     private DemoScene? _for;
+    private object? _forMap;   // 판을 세운 맵 — 같은 장면이라도 맵을 다시 읽었으면 칸의 기운 · 물체를 새로(버그 리포트 #116)
     private ZMode _zMode = ZMode.Keep;
 
     /// <summary>판의 물체를 처음 상태로(동작 0) — 판을 세울 때 · RESTART(<see cref="BattleScene.LoadEvents"/>).</summary>
     internal void Reset()
     {
         _for = host._scene;
+        _forMap = host._map;
         _ambient = null;
         _objects.Clear();
         _lingering.Clear();
@@ -83,7 +85,7 @@ internal sealed class Part1MapObjects(GameWindow host)
 
     private void Ensure()
     {
-        if (!ReferenceEquals(_for, host._scene)) Reset();
+        if (!ReferenceEquals(_for, host._scene) || !ReferenceEquals(_forMap, host._map)) Reset();
     }
 
     // ── 상자 ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -535,10 +537,10 @@ internal sealed class Part1MapObjects(GameWindow host)
     /// <summary>공격 서술 가운데 물체가 보는 둘 — +8 세기 · +3 속성(1 화염 · 2 빙한).</summary>
     internal readonly record struct Hit(int Power, int Element);
 
-    private const int MinHeat = -60, MaxHeat = 200, IgniteHeat = 160;
+    internal const int MinHeat = -60, MaxHeat = 200, IgniteHeat = 160;
 
     /// <summary>기온 — 머리 낱말 6(+0xb96e, 로더 <c>0x1002cbe5</c>). 물체 · 유닛 온도가 이쪽으로 간다. 이벤트 행동 102 가 바꾼다(<see cref="SetAmbient"/>).</summary>
-    private int Ambient => _ambient ?? host._scene.Part1Ambient;
+    internal int Ambient => _ambient ?? host._scene.Part1Ambient;
 
     private int? _ambient;
 
@@ -846,8 +848,11 @@ internal sealed class Part1MapObjects(GameWindow host)
         Linger(col, row, life, 11, motion);
     }
 
+    private bool OnBoard(int col, int row) => (uint)col < (uint)host.Cols && (uint)row < (uint)host.Rows;
+
     private void Linger(int col, int row, int life, int notice, int motion)
     {
+        if (!OnBoard(col, row)) return;   // 판 밖 칸에는 안 놓는다(버그 리포트 #116)
         int tick = host.Btl._tick;
         var l = new Lingering(col, row, tick, tick + life, notice, motion) { DrawFrom = host._lastTime };
         _lingering.Add(l);
@@ -916,14 +921,24 @@ internal sealed class Part1MapObjects(GameWindow host)
     /// <summary>그 칸에 얼음 덩이가 있나(<c>0x1008fcc0</c> — 프로즌 아이스 115~123 의 것).</summary>
     internal bool IceAt(int col, int row) => _lingering.Any(l => l is { Notice: 11, Out: false } && l.Col == col && l.Row == row);
 
+    /// <summary>
+    /// 얼음 · 땅불 칸을 물들이는 층색 — 하늘색 · 주황(모드 &gt; 가독성 향상 &gt; 얼음 · 땅불 칸 표시, 원본에 없음).
+    /// 범위 칸처럼 칸밝기를 곱해 더하고, 가산이 포화하는 흰 눈밭에서는 곱하기로 넘어간다(<see cref="BattleScene.PaintCell(int, int, uint, bool)"/>).
+    /// </summary>
+    private const uint IceMarkLayer = 0x64D2FF, FireMarkLayer = 0xFF8C28;
+
     /// <summary>얼음 덩이를 그린다 — 물체와 함께, 유닛보다 먼저(덩이는 칸 바닥 높이, 유닛은 그 위 +19 라 원본 깊이로도 유닛이 앞이다).</summary>
     private void DrawLingering()
     {
         Retire();
         double now = host._lastTime;
+        // 판이 이 맵이 아닐 때(타이틀 · 챕터 지도가 판을 제 크기로 갈았을 때)는 칸을 칠하지 않는다 — 칸 번호가 판과 안 맞는다(버그 리포트 #116).
+        bool marks = host._part1FieldMarks && host.BoardIsMap;
         foreach (var l in _lingering)
         {
             int tick = (int)((now - l.DrawFrom) * TicksPerSecond);
+            // 모드 > 가독성 향상 > 얼음 · 땅불 칸 표시(원본에 없음) — 칸 바닥을 하늘색 · 주황으로 물들이고 덩이 · 불을 얹는다(흰 눈밭에서 흰 덩이가 묻혔다).
+            if (marks && l is { Notice: 10 or 11, Out: false } && OnBoard(l.Col, l.Row)) host.Btl.PaintCell(l.Col, l.Row, l.Notice == 11 ? IceMarkLayer : FireMarkLayer, mark: true);
             switch (l.Notice)
             {
                 case 11: DrawCellObs(118, l.Motion + 3, tick, l.Col, l.Row, loop: true); break;
@@ -1280,9 +1295,14 @@ internal sealed class Part1MapObjects(GameWindow host)
     /// <summary>깊이 열쇠(세계 y, 세계 z) — y 가 먼저, 같으면 z.</summary>
     internal static long DepthKey(double worldY, int worldZ) => (long)Math.Floor(worldY) * 1_000_000L + worldZ;
 
-    /// <summary>유닛의 깊이 열쇠 — 세계 (40·줄, 20·높이 + 19)(<c>0x100349b6</c>). 높이는 물체까지 찍은 판 높이(통 · 상자 위에 서면 그만큼 높다).
+    /// <summary>유닛의 깊이 열쇠 — 세계 (40·줄 + 20, 20·높이 + 19)(<c>0x100349b6</c>). 높이는 물체까지 찍은 판 높이(통 · 상자 위에 서면 그만큼 높다).
     /// <paramref name="bottom"/> 는 세계 y 에 더할 컷 아래 끝(<see cref="BattleScene.Part1UnitKey"/>).</summary>
-    internal static long UnitKey(double row, double height, int bottom = 0) => DepthKey(row * 40 + bottom, (int)Math.Round(height * 20) + 19);
+    /// <remarks>
+    /// 유닛 세계 y 는 <b>칸 가운데</b>(칸 × 40 + 20 — 이동기 끝 자리 <c>0x1008185d</c>~, 화면 32·줄 + 16 = <see cref="BattleScene.UnitFoot"/>)다. 물체 · 맵 띠는 칸 위 끝(40·줄)이다.
+    /// 전에는 + 20 을 빠뜨려 위로 걷는 동안(줄 r → r − 1) 유닛 깊이가 떠나온 줄 r 의 바닥 띠(40·r)보다 앞서 그 띠가 다리를 덮었고,
+    /// 아래로 걸을 때도 다음 줄 바닥 띠가 발을 덮었다 — 칸 사이를 걸을 때 윗몸만 보이고 아래가 잘렸다(버그 리포트 #96).
+    /// </remarks>
+    internal static long UnitKey(double row, double height, int bottom = 0) => DepthKey(row * 40 + 20 + bottom, (int)Math.Round(height * 20) + 19);
 
     /// <summary>
     /// 물체를 준비한다 — 키를 돌리고, 그림자(z &lt; 0 자식 — 땅에 깔린다)는 바로 그리고, 장의 깊이 층과 나머지 자식(불꽃)은 깊이 차례로 모아 둔다.
@@ -1352,9 +1372,25 @@ internal sealed class Part1MapObjects(GameWindow host)
         if (ReferenceEquals(_mapDepthFor, host._scene)) return _mapDepth;
         _mapDepthFor = host._scene;
         var file = host._scene.MapFile;
-        _mapDepth = file.StartsWith(DemoScene.Part1MapPrefix, StringComparison.Ordinal) && int.TryParse(file[DemoScene.Part1MapPrefix.Length..], out int id)
-            ? Part1Map.LoadDepth(id, keyBaseBlack: host._scene.MapDecor.Count > 0) : null;
+        if (file.StartsWith(DemoScene.Part1MapPrefix, StringComparison.Ordinal))
+            _mapDepth = int.TryParse(file[DemoScene.Part1MapPrefix.Length..], out int id) ? Part1Map.LoadDepth(id, keyBaseBlack: host._scene.MapDecor.Count > 0) : null;
+        else
+        {
+            // 파트2 는 덧그림 띠만(ObtMap.ParseDepth) — 바탕은 유닛을 가리지 않는다. 버그 리포트 #102-3(벽 뒤 캐릭터가 벽 위로 올라온다).
+            try { _mapDepth = ObtMap.ParseDepth(File.ReadAllBytes(AssetPack.MapPath(file))); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _mapDepth = null; }
+        }
         return _mapDepth;
+    }
+
+    /// <summary>
+    /// 파트2 판의 한 틀을 시작한다 — 파트2 에는 맵 물체 층이 없어 <see cref="Draw"/> 를 안 부르므로 모아 둔 것만 비운다.
+    /// 이 객체는 파트2 에서 맵 덧그림의 가림 · 반투명(<see cref="QueueMapCover"/> · <see cref="GhostFrame"/> · <see cref="UnitBegin"/>)만 맡는다.
+    /// </summary>
+    internal void BeginCoverOnly()
+    {
+        _pending.Clear();
+        _drawn = 0;
     }
 
     /// <summary>
@@ -1743,6 +1779,7 @@ internal sealed class Part1MapObjects(GameWindow host)
         {
             int notice = saved[at + 2], motion = saved[at + 3];
             if (notice is not (10 or 11 or AshNotice)) continue;
+            if (!OnBoard(saved[at], saved[at + 1])) continue;   // 맵과 안 맞는 세이브 칸은 버린다(버그 리포트 #116)
             if (motion is < 0 or > 2) motion = host._rng.Next(3);   // 2026-10-26 앞 세이브의 땅불은 모션이 없었다(−1)
             var l = new Lingering(saved[at], saved[at + 1], tick - saved[at + 4], tick + saved[at + 5], notice, motion) { DrawFrom = host._lastTime };
             if (notice == AshNotice) l.DrawFrom -= AshIntro(motion) / TicksPerSecond;   // 재는 앞(23 r+3 → 96 r)을 다시 안 그린다
